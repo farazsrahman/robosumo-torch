@@ -1,20 +1,23 @@
-.PHONY: help install-local run run-local clean docker-build docker-run test
+.PHONY: help install-local run run-local clean docker-build docker-run test docker-shell
 
 help:
 	@echo "RoboSumo PyTorch - Available commands:"
-	@echo "  make docker-build  - Build Docker image"
-	@echo "  make run          - Run demo in Docker (default settings, no video)"
-	@echo "  make test         - Run test suite in Docker"
-	@echo "  make clean        - Remove __pycache__ and output files"
+	@echo "  make docker-build   - Build Docker image"
+	@echo "  make run           - Run demo in Docker (default settings, no video)"
+	@echo "  make test          - Run test suite in Docker"
+	@echo "  make clean         - Remove __pycache__ and output files"
 	@echo ""
 	@echo "Docker run options:"
 	@echo "  make docker-run ENV=RoboSumo-Bug-vs-Spider-v0 - Run with specific environment"
 	@echo "  make docker-run RECORD=--record-video          - Run with video recording"
 	@echo "  make docker-run EPISODES=5                     - Run with N episodes"
 	@echo ""
+	@echo "Interact with the container:"
+	@echo "  make docker-shell   - Open a shell inside the Docker container (for debugging/development)"
+	@echo ""
 	@echo "Local development (not recommended):"
-	@echo "  make install-local - Install dependencies locally"
-	@echo "  make run-local    - Run demo locally"
+	@echo "  make install-local  - Install dependencies locally"
+	@echo "  make run-local     - Run demo locally"
 
 # Default: build and run in Docker
 run: docker-build
@@ -46,7 +49,16 @@ docker-run: docker-build
 	docker run --rm \
 		-v $(PWD)/out:/app/out \
 		robosumo-torch:latest \
-		python play.py --record-video --env RoboSumo-Bug-vs-Bug-v0
+		python play.py --record-video --env RoboSumo-Ant-vs-Ant-v0
+
+# Open an interactive shell in the Docker container
+run-dev: docker-build
+	docker run --rm -it \
+		-v $(PWD)/out:/app/out \
+		-v $(PWD):/app \
+		-w /app \
+		robosumo-torch:latest \
+		bash
 
 # Build Docker image
 docker-build:
