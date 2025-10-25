@@ -1,2 +1,2 @@
-from .mujoco_env_new import MujocoEnv
+from .mujoco_env import MujocoEnv
 from .sumo import SumoEnv

@@ -11,7 +11,7 @@ import gymnasium as gym
 from gymnasium.spaces import Tuple
 from gymnasium.utils import EzPickle
 
-from robosumo.envs.mujoco_env_new import MujocoEnv
+from robosumo.envs.mujoco_env import MujocoEnv
 
 from . import agents
 from .utils import construct_scene
