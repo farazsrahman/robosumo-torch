@@ -15,9 +15,9 @@ from robosumo.policy_zoo.utils import load_params, load_from_tf_params, load_lst
 env_name = "RoboSumo-Ant-vs-Ant-v0"
 policy_names = ("mlp", "mlp")
 param_versions = (1, 1)
-max_episodes = 3
-record_video = False
-seed = 42
+record_video = True
+seeds = [10, 41, 43]
+max_episodes = len(seeds)
 
 POLICY_FUNC = {
     "mlp": MLPPolicy,
@@ -36,7 +36,17 @@ class EpisodeData:
     infos: list = field(default_factory=list)
 
 
-def rollout(max_episodes, record_video, seed, debug=False):
+def set_seed(seed):
+    """Set random seeds for numpy, torch, and cuda."""
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+
+
+def rollout(seeds, record_video=False, debug=False):
+    max_episodes = len(seeds)
+    
     # Construct paths to parameters
     curr_dir = os.path.dirname(os.path.realpath(__file__))
     params_dir = os.path.join(curr_dir, "../../robosumo/policy_zoo/assets")
@@ -91,19 +101,15 @@ def rollout(max_episodes, record_video, seed, debug=False):
         
         if debug:
             print("Loaded parameters for policy {} from {}".format(i, param_paths[i]))
-
-    # Seed environment and libraries for reproducibility
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
     
     # Play matches between the agents
     num_episodes, nstep = 0, 0
     total_reward = [0.0 for _ in range(len(policy))]
     total_scores = [0 for _ in range(len(policy))]
     
-    # Reset environment (gymnasium returns obs, info)
+    # Seed environment and libraries with the first seed for initial setup
+    seed = seeds[0]
+    set_seed(seed)
     observation, info = env.reset(seed=seed)
     
     # Video recording for all episodes
@@ -117,7 +123,7 @@ def rollout(max_episodes, record_video, seed, debug=False):
         rollouts[i][-1].agent_name = agent_names[i]
 
     if debug:
-        print("-" * 5 + "Episode {} ".format(num_episodes + 1) + "-" * 5)
+        print("-" * 5 + "Episode {} (seed: {}) ".format(num_episodes + 1, seeds[num_episodes]) + "-" * 5)
     
     while num_episodes < max_episodes:
         
@@ -169,7 +175,7 @@ def rollout(max_episodes, record_video, seed, debug=False):
             
             draw = True
             for i in range(len(policy)):
-                if 'winner' in infos[i]:
+                if infos[i].get('winner') is True:
                     draw = False
                     total_scores[i] += 1
                     if debug:
@@ -192,8 +198,11 @@ def rollout(max_episodes, record_video, seed, debug=False):
                     print("Video saved successfully!")
                 frames = []  # Clear frames to free memory
             
-            # Reset environment (gymnasium returns obs, info)
-            observation, info = env.reset(seed=seed)
+            # Reset environment with next seed if there are more episodes
+            if num_episodes < max_episodes:
+                next_seed = seeds[num_episodes]
+                set_seed(next_seed)
+                observation, info = env.reset(seed=next_seed)
             nstep = 0
             total_reward = [0.0 for _ in range(len(policy))]
 
@@ -202,7 +211,7 @@ def rollout(max_episodes, record_video, seed, debug=False):
 
             if num_episodes < max_episodes:
                 if debug:
-                    print("-" * 5 + "Episode {} ".format(num_episodes + 1) + "-" * 5)
+                    print("-" * 5 + "Episode {} (seed: {}) ".format(num_episodes + 1, seeds[num_episodes]) + "-" * 5)
                 for i in range(len(policy)):
                     rollouts[i].append(EpisodeData())
                     rollouts[i][-1].agent_name = agent_names[i]
@@ -243,6 +252,6 @@ def print_info(episodes: list[EpisodeData], agent_idx=0):
             print(f"Match tied: Agent {agent_idx}, Score: [{total_scores}, ...], Total Episodes: {ep_num + 1}")
 
 if __name__ == "__main__":
-    rollouts = rollout()
+    rollouts = rollout(seeds=seeds, record_video=record_video, debug=True)
     # Print info for first agent's episodes
     print_info(rollouts[0])
