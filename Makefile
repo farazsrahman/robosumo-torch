@@ -61,7 +61,7 @@ run-dev: docker-build
 		bash
 
 # Build Docker image
-docker-build:
+build:
 	docker build -t robosumo-torch:latest .
 
 # Clean up

@@ -1,6 +1,7 @@
 import gymnasium as gym
 import os
 import torch
+from dataclasses import dataclass, field
 
 import numpy as np
 import imageio
@@ -15,7 +16,7 @@ env_name = "RoboSumo-Ant-vs-Ant-v0"
 policy_names = ("mlp", "mlp")
 param_versions = (1, 1)
 max_episodes = 3
-record_video = True
+record_video = False
 seed = 42
 
 POLICY_FUNC = {
@@ -23,27 +24,19 @@ POLICY_FUNC = {
     "lstm": LSTMPolicy,
 }
 
-# ---- Format for Rollout -- 
-# rollout_0 = [
-#   {
-#       "action": [action_0, action_1, action_2, ..., action_n],
-#       "obs":    [obs_0,    obs_1,    obs_2,  , ...,    obs_n],
-#   },
-#   ...
-# ]
-# rollout_1 = [
-#   {
-#       "action": [action_0, action_1, action_2, ..., action_n],
-#       "obs":    [obs_0,    obs_1,    obs_2,  , ...,    obs_n],
-#   },
-#   ...
-# ]
-# 
-# so to get the 4th observation for the 3rd rollout you can use
-# rollout[2]["obs"][3]
+@dataclass
+class EpisodeData:
+    """Minimal dataclass for storing episode rollout data."""
+    agent_name: str = ""
+    action: list = field(default_factory=list)
+    obs: list = field(default_factory=list)
+    reward: list = field(default_factory=list)
+    total_reward: list = field(default_factory=list)
+    done: list = field(default_factory=list)
+    infos: list = field(default_factory=list)
 
 
-def main():
+def rollout(max_episodes, record_video, seed, debug=False):
     # Construct paths to parameters
     curr_dir = os.path.dirname(os.path.realpath(__file__))
     params_dir = os.path.join(curr_dir, "../../robosumo/policy_zoo/assets")
@@ -56,7 +49,8 @@ def main():
 
     # Auto-detect device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print("Using device: {}".format(device))
+    if debug:
+        print("Using device: {}".format(device))
 
     # Create environment (disable checker for multi-agent)
     env = gym.make(env_name, disable_env_checker=True)
@@ -83,6 +77,8 @@ def main():
         # Set to evaluation mode
         policy[i].eval()
 
+    assert len(policy) == 2, "Code only tested for 2 policies..."
+
     # Load policy parameters
     for i in range(len(policy)):
         params = load_params(param_paths[i])
@@ -93,7 +89,8 @@ def main():
         elif policy_names[i] == "lstm":
             load_lstm_from_tf_params(policy[i], params)
         
-        print("Loaded parameters for policy {} from {}".format(i, param_paths[i]))
+        if debug:
+            print("Loaded parameters for policy {} from {}".format(i, param_paths[i]))
 
     # Seed environment and libraries for reproducibility
     np.random.seed(seed)
@@ -111,8 +108,17 @@ def main():
     
     # Video recording for all episodes
     frames = [] 
+
+    # Create rollout lists for both policies and provide an initial episode
+    # Use list comprehension to avoid shallow copy bug with * operator
+    rollouts = [[] for _ in range(len(policy))]
+    for i in range(len(policy)):
+        rollouts[i].append(EpisodeData())
+        rollouts[i][-1].agent_name = agent_names[i]
+
+    if debug:
+        print("-" * 5 + "Episode {} ".format(num_episodes + 1) + "-" * 5)
     
-    print("-" * 5 + "Episode {} ".format(num_episodes + 1) + "-" * 5)
     while num_episodes < max_episodes:
         
         # Capture frame for video
@@ -128,26 +134,48 @@ def main():
             ])
         
         # Step environment (gymnasium returns 5 values)
-        observation, reward, terminated, truncated, infos = env.step(action)
+        new_obs, reward, terminated, truncated, infos = env.step(action)
         # For multi-agent, terminated/truncated are already lists
         done = [t or tr for t, tr in zip(terminated, truncated)]
+
+        # TODO (faraz): move this into the Env code
+        # If any agent has 'winner': True in infos, set 'loser': True for all others
+        winner_indices = [i for i, info in enumerate(infos) if info.get('winner') is True]
+        if winner_indices:
+            for i, info in enumerate(infos):
+                if i not in winner_indices:
+                    info['loser'] = True
+        else: 
+            for i, info in enumerate(infos):
+                info['loser']  = False
+                info['winner'] = False
 
         nstep += 1
         for i in range(len(policy)):
             total_reward[i] += reward[i]
-        
+            rollouts[i][-1].action.append(action[i])
+            rollouts[i][-1].obs.append(observation[i])
+            rollouts[i][-1].reward.append(reward[i])
+            rollouts[i][-1].total_reward.append(total_reward[i])
+            rollouts[i][-1].done.append(done[i])
+            rollouts[i][-1].infos.append(infos[i]) 
+
+        observation = new_obs # this is so that the action is paired with the observation that induced it and the reward that resulted from it 
+
         if done[0]:
-            # Print the number of iterations (steps) before the episode finished
-            print("Episode {} finished after {} steps.".format(num_episodes + 1, nstep))
             num_episodes += 1
+            if debug:
+                print("Episode {} finished after {} steps.".format(num_episodes, nstep))
+            
             draw = True
             for i in range(len(policy)):
                 if 'winner' in infos[i]:
                     draw = False
                     total_scores[i] += 1
-                    print("Winner: Agent {}, Scores: {}, Total Episodes: {}"
-                          .format(i, total_scores, num_episodes))
-            if draw:
+                    if debug:
+                        print("Winner: Agent {}, Scores: {}, Total Episodes: {}"
+                              .format(i, total_scores, num_episodes))
+            if draw and debug:
                 print("Match tied: Agent {}, Scores: {}, Total Episodes: {}"
                       .format(i, total_scores, num_episodes))
             
@@ -157,9 +185,11 @@ def main():
                 if not os.path.exists(out_dir):
                     os.makedirs(out_dir)
                 video_path = os.path.join(out_dir, "robosumo_episode{}.mp4".format(num_episodes))
-                print("Saving video to {}...".format(video_path))
+                if debug:
+                    print("Saving video to {}...".format(video_path))
                 imageio.mimsave(video_path, frames, fps=30)
-                print("Video saved successfully!")
+                if debug:
+                    print("Video saved successfully!")
                 frames = []  # Clear frames to free memory
             
             # Reset environment (gymnasium returns obs, info)
@@ -171,9 +201,48 @@ def main():
                 policy[i].reset()
 
             if num_episodes < max_episodes:
-                print("-" * 5 + "Episode {} ".format(num_episodes + 1) + "-" * 5)
+                if debug:
+                    print("-" * 5 + "Episode {} ".format(num_episodes + 1) + "-" * 5)
+                for i in range(len(policy)):
+                    rollouts[i].append(EpisodeData())
+                    rollouts[i][-1].agent_name = agent_names[i]
 
+    return rollouts
+
+def print_info(episodes: list[EpisodeData], agent_idx=0):
+    """Prints info (steps, scores, draws) for a list of EpisodeData.
+    
+    Args:
+        episodes: List of EpisodeData objects
+        agent_idx: Which agent's perspective to print from (default: 0)
+    """
+    total_scores = 0
+    n_episodes = len(episodes)
+    
+    for ep_num, ep in enumerate(episodes):
+        print("-" * 5 + f"Episode {ep_num + 1} " + "-" * 5)
+        n_steps = len(ep.action)
+        print(f"Episode {ep_num + 1} finished after {n_steps} steps.")
+
+        # Winner/loser/draw logic: check the infos from the last step
+        if not ep.infos:
+            print(f"Draw: Score: [{total_scores}, ...], Total Episodes: {ep_num + 1}")
+            continue
+            
+        last_info = ep.infos[-1]
+        is_winner = last_info.get('winner', False)
+        is_loser = last_info.get('loser', False)
+
+        # Determine and print outcome
+        if is_winner:
+            total_scores += 1
+            print(f"Winner: Agent {agent_idx}, Score: [{total_scores}, ...], Total Episodes: {ep_num + 1}")
+        elif is_loser:
+            print(f"Loser: Agent {agent_idx}, Score: [{total_scores}, ...], Total Episodes: {ep_num + 1}")
+        else:  # draw = if both winner AND loser are always False
+            print(f"Match tied: Agent {agent_idx}, Score: [{total_scores}, ...], Total Episodes: {ep_num + 1}")
 
 if __name__ == "__main__":
-    main()
-
+    rollouts = rollout()
+    # Print info for first agent's episodes
+    print_info(rollouts[0])

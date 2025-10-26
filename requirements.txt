@@ -4,4 +4,4 @@ mujoco>=3.0.0
 numpy
 torch
 imageio[ffmpeg]
-
+ipdb
