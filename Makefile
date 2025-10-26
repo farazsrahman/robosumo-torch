@@ -70,13 +70,5 @@ clean:
 	find . -type f -name "*.pyc" -delete
 	@echo "Note: Output videos require root to delete (created by Docker). Use: docker run --rm -v \$$(PWD)/out:/app/out alpine sh -c 'rm -rf /app/out/*'"
 
-# Local installation (not recommended, use Docker instead)
-install-local:
-	@echo "Warning: Local installation not recommended. Use Docker for consistent environment."
-	pip install -r requirements.txt
-
-# Local run (not recommended, use Docker instead)
-run-local:
-	@echo "Warning: Running locally. Consider using 'make run' for Docker execution."
-	python play.py
-
+clear-out:
+	docker run --rm -v $(PWD)/out:/app/out alpine sh -c 'rm -rf /app/out/*'
