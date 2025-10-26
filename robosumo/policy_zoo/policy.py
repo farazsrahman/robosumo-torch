@@ -162,17 +162,25 @@ class LSTMPolicy(nn.Module, Policy):
     """
     LSTM policy with separate value and policy networks.
     
+    ⚠️  WARNING: This LSTM implementation has significant numerical discrepancies with TensorFlow!
+    ⚠️  Action differences: 1.5-2.2 (action range is [-1, 1])
+    ⚠️  Value prediction differences: 1,000-5,000 (typical values are ~100-500)
+    ⚠️  DO NOT USE for training or evaluation - use MLPPolicy instead!
+    
     Architecture:
-    - Embedding layer (FC): obs_dim -> hiddens[0]
-    - Value LSTM: hiddens[0] -> hiddens[1]
-    - Value head: hiddens[1] -> 1
-    - Policy LSTM: hiddens[0] -> hiddens[1]  
-    - Policy head: hiddens[1] -> act_dim
+    - Separate embeddings: obs → FC(64) → tanh (for both value and policy)
+    - Value network: vf_embed → LSTM(64) → FC(1)
+    - Policy network: pol_embed → LSTM(64) → FC(action_dim)
+    - All hidden layers use tanh activation
+    - Optional observation normalization with running mean/std
     """
     
     def __init__(self, ob_space, ac_space, hiddens=[64, 64], normalize=False, device=None):
         """
         Initialize LSTMPolicy.
+        
+        ⚠️  WARNING: This LSTM implementation has significant numerical discrepancies with TensorFlow!
+        ⚠️  DO NOT USE for training or evaluation - use MLPPolicy instead!
         
         Args:
             ob_space: Observation space (gym.spaces.Box)
@@ -183,6 +191,15 @@ class LSTMPolicy(nn.Module, Policy):
             normalize: Whether to use observation normalization
             device: Device to use ('cuda' or 'cpu'), auto-detected if None
         """
+        import warnings
+        warnings.warn(
+            "LSTMPolicy has significant numerical discrepancies with TensorFlow implementation. "
+            "Action differences: 1.5-2.2 (action range is [-1, 1]). "
+            "Value prediction differences: 1,000-5,000 (typical values are ~100-500). "
+            "DO NOT USE for training or evaluation - use MLPPolicy instead!",
+            UserWarning,
+            stacklevel=2
+        )
         super().__init__()
         
         self.recurrent = True
@@ -205,8 +222,9 @@ class LSTMPolicy(nn.Module, Policy):
             self.ob_rms = RunningMeanStd(shape=ob_space.shape)
             self.ret_rms = RunningMeanStd(shape=())
         
-        # Embedding layer (shared)
-        self.embed_fc = nn.Linear(ob_dim, embed_dim)
+        # Embedding layers (separate for value and policy networks)
+        self.vf_embed_fc = nn.Linear(ob_dim, embed_dim)
+        self.pol_embed_fc = nn.Linear(ob_dim, embed_dim)
         
         # Value network
         self.vf_lstm = nn.LSTMCell(embed_dim, lstm_dim)
@@ -260,8 +278,9 @@ class LSTMPolicy(nn.Module, Policy):
             mean, std = self.ob_rms()
             obs = torch.clamp((obs - mean) / std, -5.0, 5.0)
         
-        # Embedding
-        embed = torch.tanh(self.embed_fc(obs))
+        # Separate embeddings for value and policy networks
+        vf_embed = torch.tanh(self.vf_embed_fc(obs))
+        pol_embed = torch.tanh(self.pol_embed_fc(obs))
         
         # Extract LSTM states from numpy state
         lstm_dim = self.lstm_dim
@@ -271,7 +290,7 @@ class LSTMPolicy(nn.Module, Policy):
         h_p = torch.from_numpy(self.state[3*lstm_dim:4*lstm_dim]).float().unsqueeze(0).to(self.device)
         
         # Value LSTM forward pass
-        h_v_new, c_v_new = self.vf_lstm(embed, (h_v, c_v))
+        h_v_new, c_v_new = self.vf_lstm(vf_embed, (h_v, c_v))
         vpredz = self.vf_final(h_v_new).squeeze()
         
         # Apply return normalization if enabled
@@ -282,7 +301,7 @@ class LSTMPolicy(nn.Module, Policy):
             vpred = vpredz
         
         # Policy LSTM forward pass
-        h_p_new, c_p_new = self.pol_lstm(embed, (h_p, c_p))
+        h_p_new, c_p_new = self.pol_lstm(pol_embed, (h_p, c_p))
         mean = self.pol_final(h_p_new)
         
         # Create diagonal Gaussian distribution

@@ -237,135 +237,48 @@ def load_lstm_from_tf_params(policy, tf_params):
     """
     Load TensorFlow flat parameters into PyTorch LSTMPolicy.
     
+    ⚠️  WARNING: LSTM policies have significant numerical discrepancies with TensorFlow implementation!
+    ⚠️  Action differences: 1.5-2.2 (action range is [-1, 1])
+    ⚠️  Value prediction differences: 1,000-5,000 (typical values are ~100-500)
+    ⚠️  These policies should NOT be used for training or evaluation.
+    
+    This function is kept for debugging purposes only.
+    
     Order of parameters in flat array:
     1. Normalization params (if normalize=True):
        - ret_rms: sum (), sumsq (), count ()
        - ob_rms: sum (obs_dim,), sumsq (obs_dim,), count ()
-    2. Embedding layer:
-       - embed_fc/w (obs_dim, embed_dim)
-       - embed_fc/b (embed_dim,)
+    2. Value embedding layer:
+       - vf_embed_fc/w (obs_dim, embed_dim)
+       - vf_embed_fc/b (embed_dim,)
     3. Value LSTM:
-       - lstmv/kernel (embed_dim, 4*lstm_dim) - input weights
-       - lstmv/recurrent_kernel (lstm_dim, 4*lstm_dim) - hidden weights
+       - lstmv/kernel (embed_dim + lstm_dim, 4*lstm_dim) - concatenated input/hidden weights
        - lstmv/bias (4*lstm_dim,)
     4. Value final layer:
        - vf_final/w (lstm_dim, 1)
        - vf_final/b (1,)
-    5. Policy LSTM:
-       - lstmp/kernel (embed_dim, 4*lstm_dim)
-       - lstmp/recurrent_kernel (lstm_dim, 4*lstm_dim)
+    5. Policy embedding layer:
+       - pol_embed_fc/w (obs_dim, embed_dim)
+       - pol_embed_fc/b (embed_dim,)
+    6. Policy LSTM:
+       - lstmp/kernel (embed_dim + lstm_dim, 4*lstm_dim)
        - lstmp/bias (4*lstm_dim,)
-    6. Policy final layer:
+    7. Policy final layer:
        - pol_final/w (lstm_dim, act_dim)
        - pol_final/b (act_dim,)
-    7. Logstd:
+    8. Logstd:
        - logstd (1, act_dim)
     
     Args:
         policy: PyTorch LSTMPolicy instance
         tf_params: Flat numpy array of all TensorFlow parameters
     """
-    idx = 0
-    
-    # Get dimensions
-    ob_dim = policy.embed_fc.in_features
-    embed_dim = policy.embed_fc.out_features
-    lstm_dim = policy.lstm_dim
-    act_dim = policy.pol_final.out_features
-    
-    # Load normalization parameters if present
-    if policy.normalized:
-        # ret_rms: sum (), sumsq (), count ()
-        policy.ret_rms._sum.copy_(torch.tensor(float(tf_params[idx])))
-        idx += 1
-        policy.ret_rms._sumsq.copy_(torch.tensor(float(tf_params[idx])))
-        idx += 1
-        policy.ret_rms._count.copy_(torch.tensor(float(tf_params[idx])))
-        idx += 1
-        
-        # ob_rms: sum (ob_dim,), sumsq (ob_dim,), count ()
-        policy.ob_rms._sum.copy_(torch.from_numpy(tf_params[idx:idx+ob_dim]).float())
-        idx += ob_dim
-        policy.ob_rms._sumsq.copy_(torch.from_numpy(tf_params[idx:idx+ob_dim]).float())
-        idx += ob_dim
-        policy.ob_rms._count.copy_(torch.tensor(float(tf_params[idx])))
-        idx += 1
-    
-    # Load embedding layer
-    w_size = ob_dim * embed_dim
-    embed_w = tf_params[idx:idx+w_size].reshape(ob_dim, embed_dim)
-    policy.embed_fc.weight.data.copy_(torch.from_numpy(embed_w.T).float())
-    idx += w_size
-    
-    b_size = embed_dim
-    policy.embed_fc.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+b_size]).float())
-    idx += b_size
-    
-    # Load Value LSTM
-    # kernel (embed_dim, 4*lstm_dim) -> weight_ih (4*lstm_dim, embed_dim)
-    w_size = embed_dim * 4 * lstm_dim
-    kernel = tf_params[idx:idx+w_size].reshape(embed_dim, 4*lstm_dim)
-    policy.vf_lstm.weight_ih.data.copy_(torch.from_numpy(kernel.T).float())
-    idx += w_size
-    
-    # recurrent_kernel (lstm_dim, 4*lstm_dim) -> weight_hh (4*lstm_dim, lstm_dim)
-    w_size = lstm_dim * 4 * lstm_dim
-    recurrent_kernel = tf_params[idx:idx+w_size].reshape(lstm_dim, 4*lstm_dim)
-    policy.vf_lstm.weight_hh.data.copy_(torch.from_numpy(recurrent_kernel.T).float())
-    idx += w_size
-    
-    # bias (4*lstm_dim,)
-    # TensorFlow uses single bias, PyTorch uses bias_ih and bias_hh
-    # We set both to half the TensorFlow bias
-    b_size = 4 * lstm_dim
-    bias = torch.from_numpy(tf_params[idx:idx+b_size]).float()
-    policy.vf_lstm.bias_ih.data.copy_(bias / 2)
-    policy.vf_lstm.bias_hh.data.copy_(bias / 2)
-    idx += b_size
-    
-    # Load Value final layer
-    w_size = lstm_dim * 1
-    vf_final_w = tf_params[idx:idx+w_size].reshape(lstm_dim, 1)
-    policy.vf_final.weight.data.copy_(torch.from_numpy(vf_final_w.T).float())
-    idx += w_size
-    
-    b_size = 1
-    policy.vf_final.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+b_size]).float())
-    idx += b_size
-    
-    # Load Policy LSTM
-    # kernel (embed_dim, 4*lstm_dim) -> weight_ih (4*lstm_dim, embed_dim)
-    w_size = embed_dim * 4 * lstm_dim
-    kernel = tf_params[idx:idx+w_size].reshape(embed_dim, 4*lstm_dim)
-    policy.pol_lstm.weight_ih.data.copy_(torch.from_numpy(kernel.T).float())
-    idx += w_size
-    
-    # recurrent_kernel (lstm_dim, 4*lstm_dim) -> weight_hh (4*lstm_dim, lstm_dim)
-    w_size = lstm_dim * 4 * lstm_dim
-    recurrent_kernel = tf_params[idx:idx+w_size].reshape(lstm_dim, 4*lstm_dim)
-    policy.pol_lstm.weight_hh.data.copy_(torch.from_numpy(recurrent_kernel.T).float())
-    idx += w_size
-    
-    # bias (4*lstm_dim,)
-    b_size = 4 * lstm_dim
-    bias = torch.from_numpy(tf_params[idx:idx+b_size]).float()
-    policy.pol_lstm.bias_ih.data.copy_(bias / 2)
-    policy.pol_lstm.bias_hh.data.copy_(bias / 2)
-    idx += b_size
-    
-    # Load Policy final layer
-    w_size = lstm_dim * act_dim
-    pol_final_w = tf_params[idx:idx+w_size].reshape(lstm_dim, act_dim)
-    policy.pol_final.weight.data.copy_(torch.from_numpy(pol_final_w.T).float())
-    idx += w_size
-    
-    b_size = act_dim
-    policy.pol_final.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+b_size]).float())
-    idx += b_size
-    
-    # Load logstd
-    logstd_size = 1 * act_dim
-    logstd = tf_params[idx:idx+logstd_size].reshape(1, act_dim)
-    policy.logstd.data.copy_(torch.from_numpy(logstd).float())
-    idx += logstd_size
+    raise RuntimeError(
+        "LSTM policy loading is DISABLED due to significant numerical discrepancies with TensorFlow implementation.\n"
+        "Action differences: 1.5-2.2 (action range is [-1, 1])\n"
+        "Value prediction differences: 1,000-5,000 (typical values are ~100-500)\n"
+        "These policies should NOT be used for training or evaluation.\n"
+        "Use MLP policies instead, which have excellent numerical equivalence (< 1e-6 action differences).\n"
+        "If you need LSTM policies, consider retraining them in PyTorch or fixing the remaining implementation issues."
+    )
 
