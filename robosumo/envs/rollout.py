@@ -15,7 +15,7 @@ from robosumo.policy_zoo.utils import load_params, load_from_tf_params, load_lst
 env_name = "RoboSumo-Ant-vs-Ant-v0"
 policy_names = ("mlp", "mlp")
 param_versions = (1, 1)
-record_video = True
+record_video = True 
 seeds = [10, 41, 43]
 max_episodes = len(seeds)
 
@@ -27,7 +27,7 @@ POLICY_FUNC = {
 @dataclass
 class EpisodeData:
     """Minimal dataclass for storing episode rollout data."""
-    agent_name: str = ""
+    morphology: str = ""
     action: list = field(default_factory=list)
     obs: list = field(default_factory=list)
     reward: list = field(default_factory=list)
@@ -44,8 +44,7 @@ def set_seed(seed):
         torch.cuda.manual_seed(seed)
 
 
-def rollout(seeds, record_video=False, debug=False):
-    max_episodes = len(seeds)
+def get_agents_and_env(debug = False):
     
     # Construct paths to parameters
     curr_dir = os.path.dirname(os.path.realpath(__file__))
@@ -59,6 +58,7 @@ def rollout(seeds, record_video=False, debug=False):
 
     # Auto-detect device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = 'cpu'
     if debug:
         print("Using device: {}".format(device))
 
@@ -77,6 +77,7 @@ def rollout(seeds, record_video=False, debug=False):
     for i, name in enumerate(policy_names):
         policy.append(
             POLICY_FUNC[name](
+                morphology=agent_names[i],
                 ob_space=env.observation_space.spaces[i],
                 ac_space=env.action_space.spaces[i],
                 hiddens=[64, 64],
@@ -101,6 +102,12 @@ def rollout(seeds, record_video=False, debug=False):
         
         if debug:
             print("Loaded parameters for policy {} from {}".format(i, param_paths[i]))
+
+    return policy, env
+
+def rollout(policy, env, seeds, record_video=False, debug=False):
+    max_episodes = len(seeds)
+    
     
     # Play matches between the agents
     num_episodes, nstep = 0, 0
@@ -120,7 +127,7 @@ def rollout(seeds, record_video=False, debug=False):
     rollouts = [[] for _ in range(len(policy))]
     for i in range(len(policy)):
         rollouts[i].append(EpisodeData())
-        rollouts[i][-1].agent_name = agent_names[i]
+        rollouts[i][-1].morphology = policy[i].morphology
 
     if debug:
         print("-" * 5 + "Episode {} (seed: {}) ".format(num_episodes + 1, seeds[num_episodes]) + "-" * 5)
@@ -214,7 +221,7 @@ def rollout(seeds, record_video=False, debug=False):
                     print("-" * 5 + "Episode {} (seed: {}) ".format(num_episodes + 1, seeds[num_episodes]) + "-" * 5)
                 for i in range(len(policy)):
                     rollouts[i].append(EpisodeData())
-                    rollouts[i][-1].agent_name = agent_names[i]
+                    rollouts[i][-1].morphology = policy[i].morphology
 
     return rollouts
 
@@ -252,6 +259,12 @@ def print_info(episodes: list[EpisodeData], agent_idx=0):
             print(f"Match tied: Agent {agent_idx}, Score: [{total_scores}, ...], Total Episodes: {ep_num + 1}")
 
 if __name__ == "__main__":
-    rollouts = rollout(seeds=seeds, record_video=record_video, debug=True)
+    import time
+
+    policy, env = get_agents_and_env(debug=True)
+    start_time = time.time()
+    rollouts = rollout(policy=policy, env=env, seeds=seeds, record_video=record_video, debug=True)
+    elapsed_time = time.time() - start_time
+    print(f"Rollout execution time: {elapsed_time:.2f} seconds")
     # Print info for first agent's episodes
     print_info(rollouts[0])

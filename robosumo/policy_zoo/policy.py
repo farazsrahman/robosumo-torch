@@ -21,9 +21,14 @@ except ImportError:
     DiagonalGaussian = utils_module.DiagonalGaussian
 
 
-class Policy:
-    """Base policy class."""
+class Policy(nn.Module):
+    """Base policy class that is also a torch.nn.Module."""
     
+    def __init__(self, morphology: str):
+        # Ensure nn.Module is initialized
+        nn.Module.__init__(self)
+        self.morphology = morphology
+
     def reset(self, **kwargs):
         pass
     
@@ -31,7 +36,7 @@ class Policy:
         raise NotImplementedError
 
 
-class MLPPolicy(nn.Module, Policy):
+class MLPPolicy(Policy):
     """
     Multi-Layer Perceptron policy with separate value and policy networks.
     
@@ -42,7 +47,7 @@ class MLPPolicy(nn.Module, Policy):
     - Optional observation normalization with running mean/std
     """
     
-    def __init__(self, ob_space, ac_space, hiddens=[64, 64], normalize=False, device=None):
+    def __init__(self, morphology, ob_space, ac_space, hiddens=[64, 64], normalize=False, device=None):
         """
         Initialize MLPPolicy.
         
@@ -53,7 +58,8 @@ class MLPPolicy(nn.Module, Policy):
             normalize: Whether to use observation normalization
             device: Device to use ('cuda' or 'cpu'), auto-detected if None
         """
-        super().__init__()
+        # Initialize base Policy (and nn.Module via Policy)
+        super().__init__(morphology)
         
         self.recurrent = False
         self.normalized = normalize
@@ -158,7 +164,7 @@ class MLPPolicy(nn.Module, Policy):
         return self.device
 
 
-class LSTMPolicy(nn.Module, Policy):
+class LSTMPolicy(Policy):
     """
     LSTM policy with separate value and policy networks.
     
@@ -176,6 +182,7 @@ class LSTMPolicy(nn.Module, Policy):
     """
     
     def __init__(self, ob_space, ac_space, hiddens=[64, 64], normalize=False, device=None):
+        raise NotImplementedError
         """
         Initialize LSTMPolicy.
         
