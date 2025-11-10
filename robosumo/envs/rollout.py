@@ -207,7 +207,7 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
             # Save outputs (videos and plots) after each episode
             episode_value_histories = [rollouts[idx][-1].value for idx in range(len(policy))]
             should_save_video = record_video and len(frames) > 0
-            should_save_plot = bool(episode_value_histories[0])
+            should_save_plot = debug and bool(episode_value_histories[0])
             if should_save_video or should_save_plot:
                 save_video_w_value(
                     episode_idx=num_episodes,
