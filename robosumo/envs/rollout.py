@@ -36,6 +36,7 @@ class EpisodeData:
     total_reward: list = field(default_factory=list)
     done: list = field(default_factory=list)
     infos: list = field(default_factory=list)
+    value: list = field(default_factory=list)
 
 
 def set_seed(seed):
@@ -131,11 +132,6 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
         rollouts[i].append(EpisodeData())
         rollouts[i][-1].morphology = policy[i].morphology
 
-    # Track value predictions per agent per episode
-    value_records = [[] for _ in range(len(policy))]
-    for i in range(len(policy)):
-        value_records[i].append([])
-
     agent_labels = get_agent_labels(policy)
 
     if debug:
@@ -187,7 +183,7 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
             rollouts[i][-1].total_reward.append(total_reward[i])
             rollouts[i][-1].done.append(done[i])
             rollouts[i][-1].infos.append(infos[i]) 
-            value_records[i][-1].append(values[i])
+            rollouts[i][-1].value.append(values[i])
 
         observation = new_obs # this is so that the action is paired with the observation that induced it and the reward that resulted from it 
 
@@ -209,9 +205,9 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
                       .format(i, total_scores, num_episodes))
             
             # Save outputs (videos and plots) after each episode
-            episode_value_histories = [value_records[idx][-1] for idx in range(len(policy))]
+            episode_value_histories = [rollouts[idx][-1].value for idx in range(len(policy))]
             should_save_video = record_video and len(frames) > 0
-            should_save_plot = bool(value_records[0][-1])
+            should_save_plot = bool(episode_value_histories[0])
             if should_save_video or should_save_plot:
                 save_video_w_value(
                     episode_idx=num_episodes,
@@ -242,7 +238,6 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
                 for i in range(len(policy)):
                     rollouts[i].append(EpisodeData())
                     rollouts[i][-1].morphology = policy[i].morphology
-                    value_records[i].append([])
                 frames = []
 
     return rollouts

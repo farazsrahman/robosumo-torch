@@ -45,8 +45,13 @@ def plot_values(agent_labels, value_histories, plot_path):
     timesteps = range(len(value_histories[0]))
     plt.figure()
 
-    for label, history in zip(agent_labels, value_histories):
-        plt.plot(timesteps, history, label=label)
+    for idx, (label, history) in enumerate(zip(agent_labels, value_histories)):
+        # colors to match those asigned to the bodies in MuJoco
+        color = "red" if idx == 0 else "green" if idx == 1 else None
+        if color:
+            plt.plot(timesteps, history, label=label, color=color)
+        else:
+            plt.plot(timesteps, history, label=label)
 
     plt.xlabel("Timestep")
     plt.ylabel("Value Prediction")
@@ -63,11 +68,19 @@ def render_value_plot(agent_labels, value_histories, current_step, total_timeste
         return None
 
     plt.figure()
-    for label, history in zip(agent_labels, value_histories):
+    for idx, (label, history) in enumerate(zip(agent_labels, value_histories)):
         steps = range(len(history))
-        plt.plot(steps, history, label=label)
+        # colors to match those asigned to the bodies in MuJoco
+        color = "red" if idx == 0 else "green" if idx == 1 else None
+        if color:
+            plt.plot(steps, history, label=label, color=color)
+        else:
+            plt.plot(steps, history, label=label)
         if history:
-            plt.scatter(len(history) - 1, history[-1], s=10)
+            scatter_kwargs = {"s": 10}
+            if color:
+                scatter_kwargs["color"] = color
+            plt.scatter(len(history) - 1, history[-1], **scatter_kwargs)
 
     plt.xlabel("Timestep")
     plt.ylabel("Value Prediction")
