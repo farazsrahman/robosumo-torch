@@ -4,13 +4,15 @@ import torch
 from dataclasses import dataclass, field
 
 import numpy as np
-import imageio
 
 import robosumo.envs
 
+from robosumo.envs.vis import (
+    get_agent_labels,
+    save_video_w_value,
+)
 from robosumo.policy_zoo.policy import LSTMPolicy, MLPPolicy
 from robosumo.policy_zoo.utils import load_params, load_from_tf_params, load_lstm_from_tf_params
-
 # ---- Default Constants ----
 env_name = "RoboSumo-Ant-vs-Ant-v0"
 policy_names = ("mlp", "mlp")
@@ -120,7 +122,7 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
     observation, info = env.reset(seed=seed)
     
     # Video recording for all episodes
-    frames = [] 
+    frames = []
 
     # Create rollout lists for both policies and provide an initial episode
     # Use list comprehension to avoid shallow copy bug with * operator
@@ -129,18 +131,31 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
         rollouts[i].append(EpisodeData())
         rollouts[i][-1].morphology = policy[i].morphology
 
+    # Track value predictions per agent per episode
+    value_records = [[] for _ in range(len(policy))]
+    for i in range(len(policy)):
+        value_records[i].append([])
+
+    agent_labels = get_agent_labels(policy)
+
     if debug:
         print("-" * 5 + "Episode {} (seed: {}) ".format(num_episodes + 1, seeds[num_episodes]) + "-" * 5)
     
     while num_episodes < max_episodes:
         
         # Capture frame for video
+        frame = None
         if record_video:
             frame = env.render()
-            frames.append(frame)
+            if frame is not None:
+                frames.append(frame)
         
         # Run inference with no gradient tracking
         with torch.no_grad():
+            values = [
+                pi.value(observation[i])
+                for i, pi in enumerate(policy)
+            ]
             action = tuple([
                 pi.act(observation[i], stochastic=True)[0]
                 for i, pi in enumerate(policy)
@@ -172,6 +187,7 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
             rollouts[i][-1].total_reward.append(total_reward[i])
             rollouts[i][-1].done.append(done[i])
             rollouts[i][-1].infos.append(infos[i]) 
+            value_records[i][-1].append(values[i])
 
         observation = new_obs # this is so that the action is paired with the observation that induced it and the reward that resulted from it 
 
@@ -192,18 +208,22 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
                 print("Match tied: Agent {}, Scores: {}, Total Episodes: {}"
                       .format(i, total_scores, num_episodes))
             
-            # Save video after each episode
-            if record_video and len(frames) > 0:
-                out_dir = "out"
-                if not os.path.exists(out_dir):
-                    os.makedirs(out_dir)
-                video_path = os.path.join(out_dir, "robosumo_episode{}.mp4".format(num_episodes))
-                if debug:
-                    print("Saving video to {}...".format(video_path))
-                imageio.mimsave(video_path, frames, fps=30)
-                if debug:
-                    print("Video saved successfully!")
-                frames = []  # Clear frames to free memory
+            # Save outputs (videos and plots) after each episode
+            episode_value_histories = [value_records[idx][-1] for idx in range(len(policy))]
+            should_save_video = record_video and len(frames) > 0
+            should_save_plot = bool(value_records[0][-1])
+            if should_save_video or should_save_plot:
+                save_video_w_value(
+                    episode_idx=num_episodes,
+                    frames=list(frames) if should_save_video else [],
+                    value_histories=episode_value_histories,
+                    agent_labels=agent_labels,
+                    out_dir="out",
+                    fps=30,
+                    debug=debug,
+                    save_plot=should_save_plot,
+                )
+            frames = []  # Clear frames to free memory
             
             # Reset environment with next seed if there are more episodes
             if num_episodes < max_episodes:
@@ -222,6 +242,8 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
                 for i in range(len(policy)):
                     rollouts[i].append(EpisodeData())
                     rollouts[i][-1].morphology = policy[i].morphology
+                    value_records[i].append([])
+                frames = []
 
     return rollouts
 

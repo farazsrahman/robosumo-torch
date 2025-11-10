@@ -35,6 +35,9 @@ class Policy(nn.Module):
     def act(self, observation):
         raise NotImplementedError
 
+    def value(self, observation):
+        raise NotImplementedError
+
 
 class MLPPolicy(Policy):
     """
@@ -158,6 +161,45 @@ class MLPPolicy(Policy):
         vpred_item = vpred.item() if vpred.dim() == 0 else vpred[0].item()
         
         return action_np, {'vpred': vpred_item}
+    
+    @torch.no_grad()
+    def value(self, observation):
+        """
+        Compute the value prediction for a single observation (no action sampling).
+        
+        Args:
+            observation: Numpy array or tensor of shape (obs_dim,) or (batch, obs_dim)
+        
+        Returns:
+            Value prediction as a float if input is 1D, otherwise a numpy array.
+        """
+        if isinstance(observation, np.ndarray):
+            obs = torch.from_numpy(observation).float()
+        else:
+            obs = observation.float()
+        
+        if obs.dim() == 1:
+            obs = obs.unsqueeze(0)
+        
+        obs = obs.to(self.device)
+        
+        if self.normalized:
+            mean, std = self.ob_rms()
+            obs = torch.clamp((obs - mean) / std, -5.0, 5.0)
+        
+        v = torch.tanh(self.vf_fc1(obs))
+        v = torch.tanh(self.vf_fc2(v))
+        vpredz = self.vf_final(v).squeeze()
+        
+        if self.normalized:
+            ret_mean, ret_std = self.ret_rms()
+            vpred = vpredz * ret_std + ret_mean
+        else:
+            vpred = vpredz
+        
+        if vpred.dim() == 0:
+            return vpred.item()
+        return vpred.cpu().numpy()
     
     def get_device(self):
         """Return the device this policy is on."""
