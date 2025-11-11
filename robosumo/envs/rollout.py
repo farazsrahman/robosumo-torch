@@ -47,7 +47,7 @@ def set_seed(seed):
         torch.cuda.manual_seed(seed)
 
 
-def get_agents_and_env(debug = False):
+def get_agents_and_env(debug = False, load_actor=None, load_critic=None):
     
     # Construct paths to parameters
     curr_dir = os.path.dirname(os.path.realpath(__file__))
@@ -76,6 +76,16 @@ def get_agents_and_env(debug = False):
             agent._adjust_z = -0.5
 
     # Initialize policies
+    num_policies = len(policy_names)
+
+    if load_actor is None:
+        load_actor = [True] * num_policies
+    if load_critic is None:
+        load_critic = [True] * num_policies
+
+    if len(load_actor) != num_policies or len(load_critic) != num_policies:
+        raise ValueError("load_actor and load_critic must match the number of policies.")
+
     policy = []
     for i, name in enumerate(policy_names):
         policy.append(
@@ -99,11 +109,27 @@ def get_agents_and_env(debug = False):
         
         # Use appropriate loader based on policy type
         if policy_names[i] == "mlp":
-            load_from_tf_params(policy[i], params)
+            if load_actor[i] or load_critic[i]:
+                load_from_tf_params(
+                    policy[i],
+                    params,
+                    load_actor=load_actor[i],
+                    load_critic=load_critic[i],
+                )
+                if debug:
+                    components = []
+                    if load_actor[i]:
+                        components.append("actor")
+                    if load_critic[i]:
+                        components.append("critic")
+                    component_str = " & ".join(components)
+                    print(f"Loaded {component_str} weights for policy {i} from {param_paths[i]}")
+            elif debug:
+                print(f"Skipped loading pretrained weights for policy {i}")
         elif policy_names[i] == "lstm":
             load_lstm_from_tf_params(policy[i], params)
         
-        if debug:
+        if debug and policy_names[i] != "mlp":
             print("Loaded parameters for policy {} from {}".format(i, param_paths[i]))
 
     return policy, env

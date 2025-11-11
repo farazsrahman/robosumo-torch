@@ -109,7 +109,7 @@ def load_params(path):
     return np.load(path)
 
 
-def load_from_tf_params(policy, tf_params):
+def load_from_tf_params(policy, tf_params, load_actor=True, load_critic=True):
     """
     Load TensorFlow flat parameters into PyTorch MLPPolicy.
     
@@ -137,6 +137,8 @@ def load_from_tf_params(policy, tf_params):
     Args:
         policy: PyTorch MLPPolicy instance
         tf_params: Flat numpy array of all TensorFlow parameters
+        load_actor: Whether to load actor (policy) weights/log std
+        load_critic: Whether to load critic (value) weights
     """
     idx = 0
     
@@ -168,68 +170,81 @@ def load_from_tf_params(policy, tf_params):
     # vffc1/w (ob_dim, hidden1)
     w_size = ob_dim * hidden1
     vffc1_w = tf_params[idx:idx+w_size].reshape(ob_dim, hidden1)
-    policy.vf_fc1.weight.data.copy_(torch.from_numpy(vffc1_w.T).float())
+    if load_critic:
+        policy.vf_fc1.weight.data.copy_(torch.from_numpy(vffc1_w.T).float())
     idx += w_size
     
     # vffc1/b (hidden1,)
-    policy.vf_fc1.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+hidden1]).float())
+    if load_critic:
+        policy.vf_fc1.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+hidden1]).float())
     idx += hidden1
     
     # vffc2/w (hidden1, hidden2)
     w_size = hidden1 * hidden2
     vffc2_w = tf_params[idx:idx+w_size].reshape(hidden1, hidden2)
-    policy.vf_fc2.weight.data.copy_(torch.from_numpy(vffc2_w.T).float())
+    if load_critic:
+        policy.vf_fc2.weight.data.copy_(torch.from_numpy(vffc2_w.T).float())
     idx += w_size
     
     # vffc2/b (hidden2,)
-    policy.vf_fc2.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+hidden2]).float())
+    if load_critic:
+        policy.vf_fc2.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+hidden2]).float())
     idx += hidden2
     
     # vffinal/w (hidden2, 1)
     w_size = hidden2 * 1
     vffinal_w = tf_params[idx:idx+w_size].reshape(hidden2, 1)
-    policy.vf_final.weight.data.copy_(torch.from_numpy(vffinal_w.T).float())
+    if load_critic:
+        policy.vf_final.weight.data.copy_(torch.from_numpy(vffinal_w.T).float())
     idx += w_size
     
     # vffinal/b (1,)
-    policy.vf_final.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+1]).float())
+    if load_critic:
+        policy.vf_final.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+1]).float())
     idx += 1
     
     # Load policy network
     # polfc1/w (ob_dim, hidden1)
     w_size = ob_dim * hidden1
     polfc1_w = tf_params[idx:idx+w_size].reshape(ob_dim, hidden1)
-    policy.pol_fc1.weight.data.copy_(torch.from_numpy(polfc1_w.T).float())
+    if load_actor:
+        policy.pol_fc1.weight.data.copy_(torch.from_numpy(polfc1_w.T).float())
     idx += w_size
     
     # polfc1/b (hidden1,)
-    policy.pol_fc1.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+hidden1]).float())
+    if load_actor:
+        policy.pol_fc1.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+hidden1]).float())
     idx += hidden1
     
     # polfc2/w (hidden1, hidden2)
     w_size = hidden1 * hidden2
     polfc2_w = tf_params[idx:idx+w_size].reshape(hidden1, hidden2)
-    policy.pol_fc2.weight.data.copy_(torch.from_numpy(polfc2_w.T).float())
+    if load_actor:
+        policy.pol_fc2.weight.data.copy_(torch.from_numpy(polfc2_w.T).float())
     idx += w_size
     
     # polfc2/b (hidden2,)
-    policy.pol_fc2.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+hidden2]).float())
+    if load_actor:
+        policy.pol_fc2.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+hidden2]).float())
     idx += hidden2
     
     # polfinal/w (hidden2, act_dim)
     w_size = hidden2 * act_dim
     polfinal_w = tf_params[idx:idx+w_size].reshape(hidden2, act_dim)
-    policy.pol_final.weight.data.copy_(torch.from_numpy(polfinal_w.T).float())
+    if load_actor:
+        policy.pol_final.weight.data.copy_(torch.from_numpy(polfinal_w.T).float())
     idx += w_size
     
     # polfinal/b (act_dim,)
-    policy.pol_final.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+act_dim]).float())
+    if load_actor:
+        policy.pol_final.bias.data.copy_(torch.from_numpy(tf_params[idx:idx+act_dim]).float())
     idx += act_dim
     
     # logstd (1, act_dim)
     logstd_size = 1 * act_dim
     logstd = tf_params[idx:idx+logstd_size].reshape(1, act_dim)
-    policy.logstd.data.copy_(torch.from_numpy(logstd).float())
+    if load_actor:
+        policy.logstd.data.copy_(torch.from_numpy(logstd).float())
     idx += logstd_size
 
 
