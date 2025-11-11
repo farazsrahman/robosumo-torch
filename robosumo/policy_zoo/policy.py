@@ -98,6 +98,46 @@ class MLPPolicy(Policy):
         # Move to device
         self.to(self.device)
     
+    def forward(self, observation):
+        """
+        Shared forward pass that produces policy mean/std and value prediction.
+        Returns:
+            mean: action mean tensor (batch, action_dim)
+            std: action std tensor (batch, action_dim)
+            value: value prediction tensor (batch,) or (batch, 1)
+        """
+        if isinstance(observation, np.ndarray):
+            obs = torch.from_numpy(observation).float()
+        else:
+            obs = observation.float()
+
+        if obs.dim() == 1:
+            obs = obs.unsqueeze(0)
+
+        obs = obs.to(self.device)
+
+        if self.normalized:
+            mean_rms, std_rms = self.ob_rms()
+            obs = torch.clamp((obs - mean_rms) / std_rms, -5.0, 5.0)
+
+        # Value network forward
+        v = torch.tanh(self.vf_fc1(obs))
+        v = torch.tanh(self.vf_fc2(v))
+        value = self.vf_final(v).squeeze(-1)
+
+        if self.normalized:
+            ret_mean, ret_std = self.ret_rms()
+            value = value * ret_std + ret_mean
+
+        # Policy network forward
+        p = torch.tanh(self.pol_fc1(obs))
+        p = torch.tanh(self.pol_fc2(p))
+        mean = self.pol_final(p)
+
+        log_std = self.logstd.expand_as(mean)
+
+        return mean, log_std, value
+    
     @torch.no_grad()
     def act(self, observation, stochastic=True):
         """
@@ -113,42 +153,10 @@ class MLPPolicy(Policy):
             - info: Dict with 'vpred' key
         """
         # Convert observation to tensor
-        if isinstance(observation, np.ndarray):
-            obs = torch.from_numpy(observation).float()
-        else:
-            obs = observation.float()
-        
-        # Add batch dimension if needed
-        if obs.dim() == 1:
-            obs = obs.unsqueeze(0)
-        
-        # Move to device
-        obs = obs.to(self.device)
-        
-        # Normalize observation if enabled
-        if self.normalized:
-            mean, std = self.ob_rms()
-            obs = torch.clamp((obs - mean) / std, -5.0, 5.0)
-        
-        # Value network forward pass
-        v = torch.tanh(self.vf_fc1(obs))
-        v = torch.tanh(self.vf_fc2(v))
-        vpredz = self.vf_final(v).squeeze()
-        
-        # Apply return normalization if enabled
-        if self.normalized:
-            ret_mean, ret_std = self.ret_rms()
-            vpred = vpredz * ret_std + ret_mean
-        else:
-            vpred = vpredz
-        
-        # Policy network forward pass
-        p = torch.tanh(self.pol_fc1(obs))
-        p = torch.tanh(self.pol_fc2(p))
-        mean = self.pol_final(p)
+        mean, log_std, value = self.forward(observation)
         
         # Create diagonal Gaussian distribution
-        pd = DiagonalGaussian(mean, self.logstd)
+        pd = DiagonalGaussian(mean, log_std)
         
         # Sample action
         if stochastic:
@@ -158,9 +166,9 @@ class MLPPolicy(Policy):
         
         # Convert to numpy and remove batch dimension
         action_np = action.squeeze().cpu().numpy()
-        vpred_item = vpred.item() if vpred.dim() == 0 else vpred[0].item()
+        value_item = value.squeeze().item()
         
-        return action_np, {'vpred': vpred_item}
+        return action_np, {'vpred': value_item}
     
     @torch.no_grad()
     def value(self, observation):
@@ -173,33 +181,11 @@ class MLPPolicy(Policy):
         Returns:
             Value prediction as a float if input is 1D, otherwise a numpy array.
         """
-        if isinstance(observation, np.ndarray):
-            obs = torch.from_numpy(observation).float()
-        else:
-            obs = observation.float()
+        _, _, value = self.forward(observation)
         
-        if obs.dim() == 1:
-            obs = obs.unsqueeze(0)
-        
-        obs = obs.to(self.device)
-        
-        if self.normalized:
-            mean, std = self.ob_rms()
-            obs = torch.clamp((obs - mean) / std, -5.0, 5.0)
-        
-        v = torch.tanh(self.vf_fc1(obs))
-        v = torch.tanh(self.vf_fc2(v))
-        vpredz = self.vf_final(v).squeeze()
-        
-        if self.normalized:
-            ret_mean, ret_std = self.ret_rms()
-            vpred = vpredz * ret_std + ret_mean
-        else:
-            vpred = vpredz
-        
-        if vpred.dim() == 0:
-            return vpred.item()
-        return vpred.cpu().numpy()
+        if value.dim() == 0:
+            return value.item()
+        return value.cpu().numpy()
     
     def get_device(self):
         """Return the device this policy is on."""

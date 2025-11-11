@@ -15,6 +15,8 @@ def run_ppo(
     steps_per_update=512,
     lr=3e-4,
     val_freq=10_000_000,
+    train_actor=True,
+    train_critic=True,
 ):
     """
     Very simple pseudo-code style PPO loop using `MLPPolicy` and `rollout` data.
@@ -35,6 +37,7 @@ def run_ppo(
         - max_grad_norm: gradient clipping norm (0.5)
         - advantage_normalization: whether to standardize advantages (True)
         - target_kl / early stopping threshold (optional, ~0.01-0.02)
+        - train_actor / train_critic: toggles for optimizing the respective heads
 
     The numbered pseudo-code steps below sketch how these hyperparameters are used in
     a typical PPO implementation.
@@ -42,8 +45,6 @@ def run_ppo(
     # Example optimizer over the trainable agent's parameters
     optimizer = optim.Adam(agent_policy.parameters(), lr=lr)
 
-    # Use fixed seeds per episode to keep behavior stable between updates
-    seeds = [1, 2, 3]
 
     for update_idx in range(total_updates):
         print(f"=== PPO Update {update_idx + 1}/{total_updates} ===")
@@ -53,14 +54,18 @@ def run_ppo(
         record_validation_video = (update_idx + 1) % val_freq == 0
 
         with torch.no_grad():
+            # Use fixed seeds per episode to keep behavior stable between updates
+            # seeds = [1, 2, 3] 
+            seeds = [np.random.randint(1, 1000000) for _ in range(3)] # HACK 
             episodes = rollout(
                 policy=[agent_policy, frozen_policy],
                 env=env,
-                seeds=seeds,
+                seeds=seeds if not record_validation_video else [42, 23, 21, 12], # HACK-y override to just get 1 video for speed
                 record_video=record_validation_video,
                 debug=False,
             )
 
+        print(f"Episode 1 steps: {len(episodes[0][0].action)}")
         if record_validation_video:
             print(f"Saved validation rollout video at update {update_idx + 1}.")
 
@@ -102,7 +107,13 @@ def run_ppo(
         #         clipped_values = values + torch.clamp(value - mb.values, -clip_epsilon, clip_epsilon)
         #         value_loss = value_coef * torch.mean((clipped_values - mb.returns) ** 2)
         #         entropy_bonus = entropy_coef * compute_entropy(mean, log_std)
-        #         loss = policy_loss + value_loss - entropy_bonus
+        #         loss = 0.0
+        #         if train_actor:
+        #             loss = loss + policy_loss - entropy_bonus
+        #         if train_critic:
+        #             loss = loss + value_loss
+        #         if not train_actor and not train_critic:
+        #             continue  # skip optimizer step entirely
         #         optimizer.zero_grad()
         #         loss.backward()
         #         torch.nn.utils.clip_grad_norm_(agent_policy.parameters(), max_grad_norm)
@@ -137,4 +148,4 @@ if __name__ == "__main__":
     trainable_agent.train()  # allow updates to its parameters
     frozen_opponent.eval()   # keep opponent fixed
 
-    run_ppo(trainable_agent, frozen_opponent, env, total_updates=2, val_freq=9999)
+    run_ppo(trainable_agent, frozen_opponent, env, total_updates=4, val_freq=2)

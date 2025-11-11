@@ -38,6 +38,25 @@ class EpisodeData:
     infos: list = field(default_factory=list)
     value: list = field(default_factory=list)
 
+class EpisodeDataTorch:
+    def __init__(self, episode_data: EpisodeData):
+        # Copy morphology as plain string
+        self.morphology = episode_data.morphology
+        # Stack list of np arrays -> torch.Tensor
+        # (ensure shape is [T, ...])
+        self.action = torch.from_numpy(np.stack(episode_data.action, axis=0))
+        self.obs = torch.from_numpy(np.stack(episode_data.obs, axis=0))
+        # Reward (list of scalars) -> shape [T]
+        self.reward = torch.tensor(episode_data.reward, dtype=torch.float32)
+        # Total reward (list of scalars at each step)
+        self.total_reward = torch.tensor(episode_data.total_reward, dtype=torch.float32)
+        # Done (list of bools) -> torch.bool
+        self.done = torch.tensor(episode_data.done, dtype=torch.bool)
+        # Infos stays as is (list of dicts)
+        self.infos = episode_data.infos
+        # Value (list of scalars, floats or 0-d np) -> [T] float
+        self.value = torch.tensor(episode_data.value, dtype=torch.float32)
+
 
 def set_seed(seed):
     """Set random seeds for numpy, torch, and cuda."""
