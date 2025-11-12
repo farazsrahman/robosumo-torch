@@ -2,6 +2,7 @@
 A variety of utilities (PyTorch version).
 This is a PyTorch implementation of the utilities from utils_modern.py.
 """
+import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -47,6 +48,37 @@ class DiagonalGaussian:
     def mode(self):
         """Return the mode (mean) of the distribution."""
         return self.mean
+
+    @property
+    def variance(self):
+        """Return the variance of the distribution."""
+        return self.std.pow(2)
+
+    def log_prob(self, value):
+        """
+        Compute the log probability of `value` under the distribution.
+        
+        Args:
+            value: Tensor with same shape as `mean`
+        
+        Returns:
+            Log probability per batch element.
+        """
+        if isinstance(value, np.ndarray):
+            value = torch.from_numpy(value).to(self.mean)
+        z = (value - self.mean) / self.std
+        # log probability for diagonal Gaussian
+        log_probs = -0.5 * (z.pow(2) + 2 * self.logstd + math.log(2 * math.pi))
+        return torch.sum(log_probs, dim=-1)
+
+    def entropy(self):
+        """
+        Compute the entropy of the distribution.
+        
+        Returns:
+            Entropy per batch element.
+        """
+        return torch.sum(self.logstd + 0.5 * math.log(2 * math.pi * math.e), dim=-1)
 
 
 class RunningMeanStd(nn.Module):

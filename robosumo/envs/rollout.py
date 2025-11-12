@@ -37,25 +37,118 @@ class EpisodeData:
     done: list = field(default_factory=list)
     infos: list = field(default_factory=list)
     value: list = field(default_factory=list)
+    log_prob: list = field(default_factory=list)
 
-class EpisodeDataTorch:
-    def __init__(self, episode_data: EpisodeData):
-        # Copy morphology as plain string
-        self.morphology = episode_data.morphology
-        # Stack list of np arrays -> torch.Tensor
-        # (ensure shape is [T, ...])
-        self.action = torch.from_numpy(np.stack(episode_data.action, axis=0))
-        self.obs = torch.from_numpy(np.stack(episode_data.obs, axis=0))
-        # Reward (list of scalars) -> shape [T]
-        self.reward = torch.tensor(episode_data.reward, dtype=torch.float32)
-        # Total reward (list of scalars at each step)
-        self.total_reward = torch.tensor(episode_data.total_reward, dtype=torch.float32)
-        # Done (list of bools) -> torch.bool
-        self.done = torch.tensor(episode_data.done, dtype=torch.bool)
-        # Infos stays as is (list of dicts)
-        self.infos = episode_data.infos
-        # Value (list of scalars, floats or 0-d np) -> [T] float
-        self.value = torch.tensor(episode_data.value, dtype=torch.float32)
+class EpisodeDataTorchMiniBatchIterator:
+    """
+    Converts a list of EpisodeData objects into flattened tensors suitable for PPO,
+    and provides a mini-batch iterator that respects episode structure for GAE (i.e., no cross-episode mixing inside a batch).
+    """
+
+    def __init__(self, episodes: list[EpisodeData], device="cpu", dtype=torch.float32):
+        self.device = torch.device(device)
+        self.dtype = dtype
+        self._build_buffers(episodes)
+
+    def _build_buffers(self, episodes: list[EpisodeData]):
+        obs_list = []
+        act_list = []
+        reward_list = []
+        done_list = []
+        value_list = []
+        log_prob_list = []
+        episode_starts = []
+
+        total_steps = 0
+
+        for ep in episodes:
+            if len(ep.obs) == 0:
+                continue
+
+            obs = torch.from_numpy(np.asarray(ep.obs, dtype=np.float32))
+            actions = torch.from_numpy(np.asarray(ep.action, dtype=np.float32))
+            rewards = torch.from_numpy(np.asarray(ep.reward, dtype=np.float32))
+            dones = torch.from_numpy(np.asarray(ep.done, dtype=np.bool_))
+            values = torch.from_numpy(np.asarray(ep.value, dtype=np.float32))
+            log_probs = torch.from_numpy(np.asarray(ep.log_prob, dtype=np.float32))
+
+            # Track episode start index
+            start_idx = total_steps
+            end_idx = start_idx + obs.shape[0]
+            episode_starts.append(torch.arange(start_idx, end_idx, device=self.device, dtype=torch.long))
+
+            obs_list.append(obs)
+            act_list.append(actions)
+            reward_list.append(rewards)
+            done_list.append(dones)
+            value_list.append(values)
+            log_prob_list.append(log_probs)
+
+            total_steps += obs.shape[0]
+
+        if total_steps == 0:
+            self.obs = torch.empty((0,), device=self.device, dtype=self.dtype)
+            self.actions = torch.empty((0,), device=self.device, dtype=self.dtype)
+            self.rewards = torch.empty((0,), device=self.device, dtype=self.dtype)
+            self.dones = torch.empty((0,), device=self.device, dtype=torch.bool)
+            self.values = torch.empty((0,), device=self.device, dtype=self.dtype)
+            self.log_probs = torch.empty((0,), device=self.device, dtype=self.dtype)
+            self.episode_starts = []
+            return
+
+        self.obs = torch.cat(obs_list, dim=0).to(self.device, dtype=self.dtype)
+        self.actions = torch.cat(act_list, dim=0).to(self.device, dtype=self.dtype)
+        self.rewards = torch.cat(reward_list, dim=0).to(self.device, dtype=self.dtype)
+        self.dones = torch.cat(done_list, dim=0).to(self.device)
+        self.values = torch.cat(value_list, dim=0).to(self.device, dtype=self.dtype)
+        self.log_probs = torch.cat(log_prob_list, dim=0).to(self.device, dtype=self.dtype)
+        self.episode_starts = episode_starts
+
+    def __len__(self):
+        return len(self.obs)
+
+    def compute_returns_and_advantages(self, gamma: float, gae_lambda: float):
+        T = len(self.obs)
+        returns = torch.zeros(T, device=self.device, dtype=self.dtype)
+        advantages = torch.zeros(T, device=self.device, dtype=self.dtype)
+
+        next_value = 0.0
+        last_gae = 0.0
+
+        for t in reversed(range(T)):
+            non_terminal = 1.0 - self.dones[t].float()
+            delta = self.rewards[t] + gamma * next_value * non_terminal - self.values[t]
+            last_gae = delta + gamma * gae_lambda * non_terminal * last_gae
+            advantages[t] = last_gae
+            returns[t] = advantages[t] + self.values[t]
+            next_value = self.values[t]
+
+        self.returns = returns
+        self.advantages = advantages
+        return returns, advantages
+
+    def iterate_minibatches(self, batch_size: int, shuffle=True):
+        T = len(self.obs)
+        if T == 0:
+            return
+
+        if shuffle:
+            permutation = torch.randperm(T, device=self.device)
+        else:
+            permutation = torch.arange(T, device=self.device)
+
+        for start in range(0, T, batch_size):
+            end = min(start + batch_size, T)
+            indices = permutation[start:end]
+
+            yield (
+                self.obs[indices],
+                self.actions[indices],
+                self.returns[indices],
+                self.advantages[indices],
+                self.values[indices],
+                self.log_probs[indices],
+            )
 
 
 def set_seed(seed):
@@ -197,10 +290,12 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
                 pi.value(observation[i])
                 for i, pi in enumerate(policy)
             ]
-            action = tuple([
-                pi.act(observation[i], stochastic=True)[0]
+            policy_outputs = [
+                pi.act(observation[i], stochastic=True)
                 for i, pi in enumerate(policy)
-            ])
+            ]
+            action = tuple(output[0] for output in policy_outputs)
+            policy_infos = [output[1] for output in policy_outputs]
         
         # Step environment (gymnasium returns 5 values)
         new_obs, reward, terminated, truncated, infos = env.step(action)
@@ -229,6 +324,7 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
             rollouts[i][-1].done.append(done[i])
             rollouts[i][-1].infos.append(infos[i]) 
             rollouts[i][-1].value.append(values[i])
+            rollouts[i][-1].log_prob.append(policy_infos[i]['log_prob'])
 
         observation = new_obs # this is so that the action is paired with the observation that induced it and the reward that resulted from it 
 

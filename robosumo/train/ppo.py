@@ -4,7 +4,30 @@ import torch.optim as optim
 
 import numpy as np
 
-from robosumo.envs.rollout import get_agents_and_env, rollout
+from robosumo.envs.rollout import (
+    EpisodeDataTorchMiniBatchIterator,
+    get_agents_and_env,
+    rollout,
+)
+from robosumo.policy_zoo.utils import DiagonalGaussian
+
+
+def estimated_kl(new_log_probs: torch.Tensor, old_log_probs: torch.Tensor) -> torch.Tensor:
+    """
+    Estimate the KL divergence between new and old policy distributions.
+    """
+    return torch.mean(old_log_probs - new_log_probs)
+
+
+def normalize(tensor: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """
+    Normalize a tensor to zero mean and unit variance.
+    """
+    if tensor.numel() == 0:
+        return tensor
+    mean = tensor.mean()
+    std = tensor.std(unbiased=False)
+    return (tensor - mean) / (std + eps)
 
 
 def run_ppo(
@@ -69,67 +92,90 @@ def run_ppo(
         if record_validation_video:
             print(f"Saved validation rollout video at update {update_idx + 1}.")
 
-        # 2) Pseudo-code: flatten and prepare training data
-        #    - observations, actions, rewards, dones, values, log_probs (needed for PPO)
-        #    - reuse hyperparameters listed in the docstring for the actual implementation.
-        #    Here we only show the structure; actual tensors and computations are omitted.
-        # observations = concat([episode.obs for episode in episodes[0]])
-        # actions = concat([episode.action for episode in episodes[0]])
-        # rewards = concat([episode.reward for episode in episodes[0]])
-        # dones = concat([episode.done for episode in episodes[0]])
-        # values = concat([episode.value for episode in episodes[0]])
-        # old_log_probs = agent_policy.log_prob(observations, actions)
+        # 2) Flatten and prepare training data
+        iterator = EpisodeDataTorchMiniBatchIterator(
+            episodes=episodes[0], # HACK (Faraz): in the end we should have this take in multiple episodes, but I need to fix later
+            device=agent_policy.get_device(),
+            dtype=torch.float32,
+        )
 
-        # 3) Pseudo-code: compute returns and (optionally) GAE advantages
-        # gamma = 0.99
-        # gae_lambda = 0.95
-        # returns = compute_discounted_returns(rewards, dones, gamma)
-        # advantages = compute_gae(rewards, values, dones, gamma, gae_lambda)
-        # if advantage_normalization:
-        #     advantages = normalize(advantages)
+        if len(iterator) == 0:
+            print("No rollout data collected; skipping update.\n")
+            continue
 
-        # 4) Pseudo-code: PPO update epochs/minibatches
-        # ppo_epochs = 4
-        # minibatch_size = 64
-        # clip_epsilon = 0.2
-        # value_coef = 0.5
-        # entropy_coef = 0.01
-        # max_grad_norm = 0.5
-        # target_kl = 0.015
-        # for epoch in range(ppo_epochs):
-        #     for mb in iterate_minibatches(observations, actions, returns, advantages, old_log_probs, minibatch_size):
-        #         mean, log_std, value = agent_policy.forward(mb.observations)
-        #         new_log_probs = compute_log_probs(mean, log_std, mb.actions)
-        #         ratio = torch.exp(new_log_probs - mb.old_log_probs)
-        #         surrogate = ratio * mb.advantages
-        #         clipped = torch.clamp(ratio, 1 - clip_epsilon, 1 + clip_epsilon) * mb.advantages
-        #         policy_loss = -torch.mean(torch.min(surrogate, clipped))
-        #         clipped_values = values + torch.clamp(value - mb.values, -clip_epsilon, clip_epsilon)
-        #         value_loss = value_coef * torch.mean((clipped_values - mb.returns) ** 2)
-        #         entropy_bonus = entropy_coef * compute_entropy(mean, log_std)
-        #         loss = 0.0
-        #         if train_actor:
-        #             loss = loss + policy_loss - entropy_bonus
-        #         if train_critic:
-        #             loss = loss + value_loss
-        #         if not train_actor and not train_critic:
-        #             continue  # skip optimizer step entirely
-        #         optimizer.zero_grad()
-        #         loss.backward()
-        #         torch.nn.utils.clip_grad_norm_(agent_policy.parameters(), max_grad_norm)
-        #         optimizer.step()
-        #         if target_kl and estimated_kl(new_log_probs, mb.old_log_probs) > target_kl:
-        #             break
+        returns, advantages = iterator.compute_returns_and_advantages(
+            gamma=0.99,
+            gae_lambda=0.95,
+        )
 
-        # For this pseudo loop, just perform a no-op optimizer step to show progress.
-        optimizer.zero_grad()
-        for p in agent_policy.parameters():
-            if p.grad is not None:
-                p.grad.detach_()
-                p.grad.zero_()
-        optimizer.step()
+        if train_actor:
+            advantages.copy_(normalize(advantages))
 
-        print("Collected episodes and performed a placeholder PPO update.\n")
+        # 3) PPO update epochs/minibatches
+        if not train_actor and not train_critic:
+            print("Both actor and critic training disabled; skipping optimization step.\n")
+            continue
+
+        ppo_epochs = 4
+        minibatch_size = 64
+        clip_epsilon = 0.2
+        value_coef = 0.5
+        entropy_coef = 0.01
+        max_grad_norm = 0.5
+        target_kl = 0.015
+
+        early_stop = False
+        last_kl = None
+
+        for epoch in range(ppo_epochs):
+            for (
+                mb_obs,
+                mb_actions,
+                mb_returns,
+                mb_advantages,
+                mb_values,
+                mb_log_probs,
+            ) in iterator.iterate_minibatches(minibatch_size, shuffle=True):
+                mean, log_std, value_pred, aux = agent_policy.forward(mb_obs)
+                pd = aux['distribution']
+                new_log_probs = pd.log_prob(mb_actions)
+
+                loss = torch.tensor(0.0, device=agent_policy.get_device())
+
+                if train_actor:
+                    if mb_log_probs is None:
+                        raise RuntimeError("Old log probabilities missing for PPO actor update.")
+                    ratio = torch.exp(new_log_probs - mb_log_probs)
+                    surrogate = ratio * mb_advantages
+                    clipped = torch.clamp(ratio, 1 - clip_epsilon, 1 + clip_epsilon) * mb_advantages
+                    policy_loss = -torch.mean(torch.min(surrogate, clipped))
+                    entropy_bonus = entropy_coef * pd.entropy().mean()
+                    loss = loss + policy_loss - entropy_bonus
+
+                if train_critic:
+                    value_pred = value_pred.squeeze(-1)
+                    value_clipped = mb_values + torch.clamp(value_pred - mb_values, -clip_epsilon, clip_epsilon)
+                    value_loss_unclipped = (value_pred - mb_returns) ** 2
+                    value_loss_clipped = (value_clipped - mb_returns) ** 2
+                    value_loss = torch.mean(torch.max(value_loss_unclipped, value_loss_clipped))
+                    loss = loss + value_coef * value_loss
+
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(agent_policy.parameters(), max_grad_norm)
+                optimizer.step()
+
+                if target_kl is not None:
+                    approx_kl = estimated_kl(new_log_probs, mb_log_probs)
+                    last_kl = approx_kl.item()
+                    if approx_kl > target_kl:
+                        early_stop = True
+                        break
+            if early_stop:
+                print(f"Stopped early due to reaching target KL ({last_kl:.4f}).")
+                break
+
+        print("Collected episodes and performed PPO update.\n")
 
 
 if __name__ == "__main__":
@@ -148,4 +194,4 @@ if __name__ == "__main__":
     trainable_agent.train()  # allow updates to its parameters
     frozen_opponent.eval()   # keep opponent fixed
 
-    run_ppo(trainable_agent, frozen_opponent, env, total_updates=4, val_freq=2)
+    run_ppo(trainable_agent, frozen_opponent, env, total_updates=1000, val_freq=500, train_actor=True, train_critic=True)

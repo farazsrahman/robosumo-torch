@@ -100,11 +100,12 @@ class MLPPolicy(Policy):
     
     def forward(self, observation):
         """
-        Shared forward pass that produces policy mean/std and value prediction.
+        Shared forward pass that produces policy statistics, value prediction, and auxiliary info.
         Returns:
             mean: action mean tensor (batch, action_dim)
-            std: action std tensor (batch, action_dim)
+            log_std: action log standard deviation tensor (batch, action_dim)
             value: value prediction tensor (batch,) or (batch, 1)
+            aux: dict containing distribution helpers (distribution instance, std, variance, entropy)
         """
         if isinstance(observation, np.ndarray):
             obs = torch.from_numpy(observation).float()
@@ -136,7 +137,15 @@ class MLPPolicy(Policy):
 
         log_std = self.logstd.expand_as(mean)
 
-        return mean, log_std, value
+        distribution = DiagonalGaussian(mean, log_std)
+        aux = {
+            'distribution': distribution,
+            'std': distribution.std,
+            'variance': distribution.variance,
+            'entropy': distribution.entropy(),
+        }
+        
+        return mean, log_std, value, aux
     
     @torch.no_grad()
     def act(self, observation, stochastic=True):
@@ -153,22 +162,25 @@ class MLPPolicy(Policy):
             - info: Dict with 'vpred' key
         """
         # Convert observation to tensor
-        mean, log_std, value = self.forward(observation)
+        mean, log_std, value, aux = self.forward(observation)
         
         # Create diagonal Gaussian distribution
-        pd = DiagonalGaussian(mean, log_std)
+        pd = aux['distribution']
         
         # Sample action
         if stochastic:
             action = pd.sample()
         else:
             action = pd.mode()
+
+        log_prob = pd.log_prob(action)
         
         # Convert to numpy and remove batch dimension
         action_np = action.squeeze().cpu().numpy()
         value_item = value.squeeze().item()
+        log_prob_item = log_prob.squeeze().item()
         
-        return action_np, {'vpred': value_item}
+        return action_np, {'vpred': value_item, 'log_prob': log_prob_item}
     
     @torch.no_grad()
     def value(self, observation):
@@ -181,7 +193,7 @@ class MLPPolicy(Policy):
         Returns:
             Value prediction as a float if input is 1D, otherwise a numpy array.
         """
-        _, _, value = self.forward(observation)
+        _, _, value, _ = self.forward(observation)
         
         if value.dim() == 0:
             return value.item()
@@ -347,6 +359,8 @@ class LSTMPolicy(Policy):
             action = pd.sample()
         else:
             action = pd.mode()
+
+        log_prob = pd.log_prob(action)
         
         # Update internal state
         new_state = np.concatenate([
@@ -360,8 +374,9 @@ class LSTMPolicy(Policy):
         # Convert to numpy and remove batch dimension
         action_np = action.squeeze().cpu().numpy()
         vpred_item = vpred.item() if vpred.dim() == 0 else vpred[0].item()
+        log_prob_item = log_prob.squeeze().item()
         
-        return action_np, {'vpred': vpred_item, 'state': new_state}
+        return action_np, {'vpred': vpred_item, 'state': new_state, 'log_prob': log_prob_item}
     
     def reset(self):
         """Reset LSTM hidden state."""
