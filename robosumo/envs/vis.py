@@ -1,5 +1,6 @@
 import io
 import os
+import time
 
 import imageio
 import matplotlib
@@ -112,6 +113,8 @@ def save_video_w_value(
     fps=30,
     debug=False,
     save_plot=True,
+    profile=False,
+    animate_plot=False,  # If False, use static plot for entire trajectory (much faster)
 ):
     has_frames = bool(frames)
     has_values = bool(value_histories and value_histories[0])
@@ -122,10 +125,23 @@ def save_video_w_value(
     os.makedirs(out_dir, exist_ok=True)
 
     if has_frames:
+        if profile:
+            print(f"\n=== Video Profile for Episode {episode_idx} ===")
+            print(f"  Input frames: {len(frames)} frames, size: {frames[0].shape[1]}x{frames[0].shape[0]}")
+        
         video_path = os.path.join(out_dir, f"robosumo_episode{episode_idx}.mp4")
         if debug:
             print(f"Saving video to {video_path}...")
+        
+        start_save = time.time()
         imageio.mimsave(video_path, frames, fps=fps)
+        save_time = time.time() - start_save
+        
+        if profile:
+            print(f"  Video encoding: {save_time:.3f}s ({save_time/len(frames)*1000:.2f}ms per frame)")
+            print(f"  Total video save: {save_time:.3f}s")
+            print(f"  Output size: {frames[0].shape[1]}x{frames[0].shape[0]}")
+        
         if debug:
             print("Video saved successfully!")
 
@@ -137,20 +153,54 @@ def save_video_w_value(
 
     composite_frames = []
     if has_frames:
-        for step_idx, frame_np in enumerate(frames):
-            partial_histories = [
-                hist[: step_idx + 1] for hist in value_histories
-            ]
-            value_plot = render_value_plot(
+        if profile:
+            print(f"\n=== Composite Video Profile for Episode {episode_idx} ===")
+            mode_str = "animated" if animate_plot else "static"
+            print(f"  Plot mode: {mode_str}")
+        
+        start_composite = time.time()
+        plot_render_time = 0
+        composite_build_time = 0
+        
+        # Render plot once if using static mode (much faster)
+        static_value_plot = None
+        if not animate_plot:
+            plot_start = time.time()
+            # Use full trajectory for static plot
+            static_value_plot = render_value_plot(
                 agent_labels,
-                partial_histories,
-                current_step=step_idx,
+                value_histories,  # Full histories, not partial
+                current_step=total_steps - 1,
                 total_timesteps=total_steps,
                 y_limits=y_limits,
             )
+            plot_render_time = time.time() - plot_start
+            if profile:
+                print(f"  Static plot rendering: {plot_render_time:.3f}s (one-time)")
+        
+        for step_idx, frame_np in enumerate(frames):
+            # Use static plot if available, otherwise render animated plot
+            if animate_plot:
+                partial_histories = [
+                    hist[: step_idx + 1] for hist in value_histories
+                ]
+                
+                plot_start = time.time()
+                value_plot = render_value_plot(
+                    agent_labels,
+                    partial_histories,
+                    current_step=step_idx,
+                    total_timesteps=total_steps,
+                    y_limits=y_limits,
+                )
+                plot_render_time += time.time() - plot_start
+            else:
+                value_plot = static_value_plot
+            
             if value_plot is None:
                 continue
 
+            build_start = time.time()
             frame_array = np.array(frame_np)
             plot_height = value_plot.height
             frame_height = frame_array.shape[0]
@@ -165,12 +215,29 @@ def save_video_w_value(
 
             composite_frame = np.concatenate((frame_array, value_array), axis=1)
             composite_frames.append(composite_frame)
+            composite_build_time += time.time() - build_start
+
+        if profile and composite_frames:
+            if animate_plot:
+                print(f"  Plot rendering: {plot_render_time:.3f}s ({plot_render_time/len(composite_frames)*1000:.2f}ms per frame)")
+            else:
+                print(f"  Plot rendering: {plot_render_time:.3f}s (static, one-time)")
+            print(f"  Composite frame building: {composite_build_time:.3f}s ({composite_build_time/len(composite_frames)*1000:.2f}ms per frame)")
 
     if composite_frames:
         composite_path = os.path.join(out_dir, f"robosumo_episode{episode_idx}_values_video.mp4")
         if debug:
             print(f"Saving composite video to {composite_path}...")
+        
+        start_composite_save = time.time()
         imageio.mimsave(composite_path, composite_frames, fps=fps)
+        composite_save_time = time.time() - start_composite_save
+        
+        if profile:
+            total_composite_time = time.time() - start_composite
+            print(f"  Composite video encoding: {composite_save_time:.3f}s ({composite_save_time/len(composite_frames)*1000:.2f}ms per frame)")
+            print(f"  Total composite video: {total_composite_time:.3f}s")
+        
         if debug:
             print("Composite video saved successfully!")
 

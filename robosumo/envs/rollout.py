@@ -1,5 +1,6 @@
 import gymnasium as gym
 import os
+import time
 import torch
 from dataclasses import dataclass, field
 
@@ -20,6 +21,10 @@ param_versions = (1, 1)
 record_video = True 
 seeds = [10, 41, 43]
 max_episodes = len(seeds)
+
+# Video fast mode settings (for faster rendering via frame rate downsampling)
+VIDEO_FAST_MODE_DOWNSAMPLE = 5  # Capture every Nth frame (1 in 5 = 6 FPS when base is 30 FPS)
+VIDEO_FAST_MODE_FPS = 30 // VIDEO_FAST_MODE_DOWNSAMPLE  # Effective FPS after downsampling
 
 POLICY_FUNC = {
     "mlp": MLPPolicy,
@@ -255,7 +260,7 @@ def get_agents_and_env(debug = False, load_actor=None, load_critic=None):
 
     return policy, env
 
-def rollout(policy, env, seeds, record_video=False, debug=False):
+def rollout(policy, env, seeds, record_video=False, debug=False, video_fast_mode=False):
     max_episodes = len(seeds)
     
     
@@ -271,6 +276,8 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
     
     # Video recording for all episodes
     frames = []
+    render_times = []  # Track render call times for profiling
+    frame_counter = 0  # For frame downsampling in fast mode
 
     # Create rollout lists for both policies and provide an initial episode
     # Use list comprehension to avoid shallow copy bug with * operator
@@ -285,13 +292,6 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
         print("-" * 5 + "Episode {} (seed: {}) ".format(num_episodes + 1, seeds[num_episodes]) + "-" * 5)
     
     while num_episodes < max_episodes:
-        
-        # Capture frame for video
-        frame = None
-        if record_video:
-            frame = env.render()
-            if frame is not None:
-                frames.append(frame)
         
         # Run inference with no gradient tracking
         with torch.no_grad():
@@ -308,6 +308,18 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
         
         # Step environment (gymnasium returns 5 values)
         new_obs, reward, terminated, truncated, infos = env.step(action)
+        
+        # Capture frame for video AFTER step (to capture updated state)
+        if record_video:
+            frame_counter += 1
+            should_capture = not video_fast_mode or (frame_counter % VIDEO_FAST_MODE_DOWNSAMPLE == 1)
+            if should_capture:
+                render_start = time.time()
+                frame = env.render()
+                render_time = time.time() - render_start
+                render_times.append(render_time)
+                if frame is not None:
+                    frames.append(frame)
         # For multi-agent, terminated/truncated are already lists
         done = [t or tr for t, tr in zip(terminated, truncated)]
 
@@ -354,6 +366,18 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
                 print("Match tied: Agent {}, Scores: {}, Total Episodes: {}"
                       .format(i, total_scores, num_episodes))
             
+            # Print render profiling stats if debug mode
+            if debug and record_video and render_times:
+                total_render_time = sum(render_times)
+                avg_render_time = total_render_time / len(render_times)
+                max_render_time = max(render_times)
+                min_render_time = min(render_times)
+                print(f"Render profiling: {len(render_times)} renders, "
+                      f"total: {total_render_time:.3f}s, "
+                      f"avg: {avg_render_time*1000:.2f}ms, "
+                      f"min: {min_render_time*1000:.2f}ms, "
+                      f"max: {max_render_time*1000:.2f}ms")
+            
             # Save outputs (videos and plots) after each episode
             episode_value_histories = [rollouts[idx][-1].value for idx in range(len(policy))]
             should_save_video = record_video and len(frames) > 0
@@ -365,11 +389,14 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
                     value_histories=episode_value_histories,
                     agent_labels=agent_labels,
                     out_dir="out",
-                    fps=30,
+                    fps=VIDEO_FAST_MODE_FPS if video_fast_mode else 30,
                     debug=debug,
                     save_plot=should_save_plot,
+                    profile=debug,  # Profile when debug is enabled
                 )
             frames = []  # Clear frames to free memory
+            render_times = []  # Reset render times for next episode
+            frame_counter = 0  # Reset frame counter for next episode
             
             # Reset environment with next seed if there are more episodes
             if num_episodes < max_episodes:
@@ -389,6 +416,7 @@ def rollout(policy, env, seeds, record_video=False, debug=False):
                     rollouts[i].append(EpisodeData())
                     rollouts[i][-1].morphology = policy[i].morphology
                 frames = []
+                frame_counter = 0  # Reset frame counter for next episode
 
     return rollouts
 
