@@ -88,13 +88,22 @@ def run_ppo(
                 debug=False,
             )
 
-        print(f"Episode 1 steps: {len(episodes[0][0].action)}")
+        # episodes is a list of lists: episodes[agent_idx][episode_idx]
+        # episodes[0] contains all episodes for the trainable agent (agent 0)
+        trainable_agent_episodes = episodes[0]
+        num_episodes_collected = len(trainable_agent_episodes)
+        total_steps = sum(len(ep.action) for ep in trainable_agent_episodes)
+        
+        print(f"Collected {num_episodes_collected} episode(s) with {total_steps} total steps")
+        if num_episodes_collected > 0:
+            print(f"  Episode lengths: {[len(ep.action) for ep in trainable_agent_episodes]}")
+        
         if record_validation_video:
             print(f"Saved validation rollout video at update {update_idx + 1}.")
 
-        # 2) Flatten and prepare training data
+        # 2) Flatten and prepare training data from all episodes
         iterator = EpisodeDataTorchMiniBatchIterator(
-            episodes=episodes[0], # HACK (Faraz): in the end we should have this take in multiple episodes, but I need to fix later
+            episodes=trainable_agent_episodes,
             device=agent_policy.get_device(),
             dtype=torch.float32,
         )
@@ -194,4 +203,4 @@ if __name__ == "__main__":
     trainable_agent.train()  # allow updates to its parameters
     frozen_opponent.eval()   # keep opponent fixed
 
-    run_ppo(trainable_agent, frozen_opponent, env, total_updates=1000, val_freq=500, train_actor=True, train_critic=True)
+    run_ppo(trainable_agent, frozen_opponent, env, total_updates=10, val_freq=10, train_actor=False, train_critic=False)

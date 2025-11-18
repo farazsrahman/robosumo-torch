@@ -108,6 +108,12 @@ class EpisodeDataTorchMiniBatchIterator:
         return len(self.obs)
 
     def compute_returns_and_advantages(self, gamma: float, gae_lambda: float):
+        """
+        Compute returns and advantages using GAE (Generalized Advantage Estimation).
+        
+        This method handles multiple episodes correctly by using the done flags
+        to reset bootstrap values and GAE traces at episode boundaries.
+        """
         T = len(self.obs)
         returns = torch.zeros(T, device=self.device, dtype=self.dtype)
         advantages = torch.zeros(T, device=self.device, dtype=self.dtype)
@@ -121,6 +127,9 @@ class EpisodeDataTorchMiniBatchIterator:
             last_gae = delta + gamma * gae_lambda * non_terminal * last_gae
             advantages[t] = last_gae
             returns[t] = advantages[t] + self.values[t]
+            # Set next_value for the previous timestep (in reverse order)
+            # The non_terminal flag in the delta calculation above already handles
+            # preventing bootstrapping at terminal states correctly
             next_value = self.values[t]
 
         self.returns = returns

@@ -73,6 +73,7 @@ def main(env, policy_names, param_versions, max_episodes, record_video):
     for i, name in enumerate(policy_names):
         policy.append(
             POLICY_FUNC[name](
+                morphology=agent_names[i],
                 ob_space=env.observation_space.spaces[i],
                 ac_space=env.action_space.spaces[i],
                 hiddens=[64, 64],
