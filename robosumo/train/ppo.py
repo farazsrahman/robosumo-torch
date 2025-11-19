@@ -1,8 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import os
+import tempfile
+import glob
+import shutil
 
 import numpy as np
+import wandb
 
 from robosumo.envs.rollout import (
     EpisodeDataTorchMiniBatchIterator,
@@ -68,6 +73,8 @@ def run_ppo(
     # Example optimizer over the trainable agent's parameters
     optimizer = optim.Adam(agent_policy.parameters(), lr=lr)
 
+    # Initialize WandB
+    wandb.init(project="robosumo-torch", config={"lr": lr, "total_updates": total_updates})
 
     for update_idx in range(total_updates):
         print(f"=== PPO Update {update_idx + 1}/{total_updates} ===")
@@ -76,12 +83,16 @@ def run_ppo(
         #    Note: we run multiple episodes and then stitch them together.
         record_validation_video = (update_idx + 1) % val_freq == 0
 
+        video_dir = None
+        if record_validation_video:
+            video_dir = tempfile.mkdtemp(prefix="robosumo_videos_")
+
         with torch.no_grad():
             # Use fixed seeds per episode to keep behavior stable between updates
             # seeds = [1, 2, 3] 
-            seeds = [np.random.randint(1, 1000000) for _ in range(3)] # HACK 
+            seeds = [np.random.randint(1, 1000000) for _ in range(16)] # HACK 
             if True and record_validation_video:
-                seeds = [67, 3, 23] # HACK-y override to just get 1 video for speed
+                seeds = [67] # HACK-y override to just get 1 video for speed
                 print(f"Overriding seeds with {seeds} for video recording")
             episodes = rollout(
                 policy=[agent_policy, frozen_policy],
@@ -90,6 +101,7 @@ def run_ppo(
                 record_video=record_validation_video,
                 video_fast_mode=True,
                 debug=False,
+                video_dir=video_dir if record_validation_video else None
             )
 
         # episodes is a list of lists: episodes[agent_idx][episode_idx]
@@ -98,12 +110,27 @@ def run_ppo(
         num_episodes_collected = len(trainable_agent_episodes)
         total_steps = sum(len(ep.action) for ep in trainable_agent_episodes)
         
+        # Compute and log the average episode duration (length in steps) to wandb
+        if num_episodes_collected > 0:
+            avg_steps = total_steps / len(trainable_agent_episodes)
+            wandb.log({"avg_episode_duration": avg_steps}, step=update_idx)
+
         print(f"Collected {num_episodes_collected} episode(s) with {total_steps} total steps")
         if num_episodes_collected > 0:
             print(f"  Episode lengths: {[len(ep.action) for ep in trainable_agent_episodes]}")
         
-        if record_validation_video:
-            print(f"Saved validation rollout video at update {update_idx + 1}.")
+        if record_validation_video and video_dir:
+            # Upload videos to WandB
+            video_files = glob.glob(os.path.join(video_dir, "robosumo_episode*_values_video.mp4"))
+            for video_path in sorted(video_files):
+                # Extract episode number from filename like "robosumo_episode1_values_video.mp4"
+                filename = os.path.basename(video_path)
+                episode_num = filename.split("episode")[1].split("_")[0]
+                wandb.log({f"video/episode_{episode_num}": wandb.Video(video_path, format="mp4")}, step=update_idx)
+            
+            # Clean up temp directory
+            shutil.rmtree(video_dir)
+            print(f"Uploaded validation videos to WandB and cleaned up temp directory at update {update_idx + 1}.")
 
         # 2) Flatten and prepare training data from all episodes
         iterator = EpisodeDataTorchMiniBatchIterator(
@@ -139,6 +166,10 @@ def run_ppo(
 
         early_stop = False
         last_kl = None
+        
+        # Track losses for logging
+        epoch_policy_losses = []
+        epoch_value_losses = []
 
         for epoch in range(ppo_epochs):
             for (
@@ -164,6 +195,7 @@ def run_ppo(
                     policy_loss = -torch.mean(torch.min(surrogate, clipped))
                     entropy_bonus = entropy_coef * pd.entropy().mean()
                     loss = loss + policy_loss - entropy_bonus
+                    epoch_policy_losses.append(policy_loss.item())
 
                 if train_critic:
                     value_pred = value_pred.squeeze(-1)
@@ -172,6 +204,7 @@ def run_ppo(
                     value_loss_clipped = (value_clipped - mb_returns) ** 2
                     value_loss = torch.mean(torch.max(value_loss_unclipped, value_loss_clipped))
                     loss = loss + value_coef * value_loss
+                    epoch_value_losses.append(value_loss.item())
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -187,6 +220,12 @@ def run_ppo(
             if early_stop:
                 print(f"Stopped early due to reaching target KL ({last_kl:.4f}).")
                 break
+
+        # Log losses to WandB
+        if epoch_policy_losses:
+            wandb.log({"policy_loss": np.mean(epoch_policy_losses)}, step=update_idx)
+        if epoch_value_losses:
+            wandb.log({"value_loss": np.mean(epoch_value_losses)}, step=update_idx)
 
         print("Collected episodes and performed PPO update.\n")
 
@@ -211,8 +250,8 @@ if __name__ == "__main__":
         trainable_agent, 
         frozen_opponent, 
         env, 
-        total_updates=80, 
-        val_freq=10, 
+        total_updates=1000, 
+        val_freq=50, 
         train_actor=True, 
         train_critic=False
     )

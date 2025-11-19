@@ -18,8 +18,8 @@ def main():
     rollouts = rollout(
         policy=policies,
         env=env,
-        seeds=[42],
-        record_video=True,
+        seeds=list(range(10)),
+        record_video=False,
         debug=True,
         video_fast_mode=args.video_fast_mode,
     )

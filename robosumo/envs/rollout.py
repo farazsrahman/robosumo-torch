@@ -260,7 +260,7 @@ def get_agents_and_env(debug = False, load_actor=None, load_critic=None):
 
     return policy, env
 
-def rollout(policy, env, seeds, record_video=False, debug=False, video_fast_mode=False):
+def rollout(policy, env, seeds, record_video=False, debug=False, video_fast_mode=False, video_dir="out"):
     max_episodes = len(seeds)
     
     
@@ -381,14 +381,15 @@ def rollout(policy, env, seeds, record_video=False, debug=False, video_fast_mode
             # Save outputs (videos and plots) after each episode
             episode_value_histories = [rollouts[idx][-1].value for idx in range(len(policy))]
             should_save_video = record_video and len(frames) > 0
-            should_save_plot = debug and bool(episode_value_histories[0])
+            # should_save_plot = debug and bool(episode_value_histories[0])
+            should_save_plot = False
             if should_save_video or should_save_plot:
                 save_video_w_value(
                     episode_idx=num_episodes,
                     frames=list(frames) if should_save_video else [],
                     value_histories=episode_value_histories,
                     agent_labels=agent_labels,
-                    out_dir="out",
+                    out_dir=video_dir,
                     fps=VIDEO_FAST_MODE_FPS if video_fast_mode else 30,
                     debug=debug,
                     save_plot=should_save_plot,

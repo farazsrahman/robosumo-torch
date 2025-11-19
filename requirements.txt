@@ -6,3 +6,4 @@ torch
 imageio[ffmpeg]
 ipdb
 matplotlib
+wandb
