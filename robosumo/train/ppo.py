@@ -80,11 +80,15 @@ def run_ppo(
             # Use fixed seeds per episode to keep behavior stable between updates
             # seeds = [1, 2, 3] 
             seeds = [np.random.randint(1, 1000000) for _ in range(3)] # HACK 
+            if True and record_validation_video:
+                seeds = [67, 3, 23] # HACK-y override to just get 1 video for speed
+                print(f"Overriding seeds with {seeds} for video recording")
             episodes = rollout(
                 policy=[agent_policy, frozen_policy],
                 env=env,
-                seeds=seeds if not record_validation_video else [42, 23, 21, 12], # HACK-y override to just get 1 video for speed
+                seeds=seeds, 
                 record_video=record_validation_video,
+                video_fast_mode=True,
                 debug=False,
             )
 
@@ -191,7 +195,7 @@ if __name__ == "__main__":
     # Create agents and environment, then run the pseudo PPO loop
     policy_list, env = get_agents_and_env(
         debug=True,
-        load_actor=[True, True],
+        load_actor=[False, True],
         load_critic=[True, True],
     )
 
@@ -203,4 +207,12 @@ if __name__ == "__main__":
     trainable_agent.train()  # allow updates to its parameters
     frozen_opponent.eval()   # keep opponent fixed
 
-    run_ppo(trainable_agent, frozen_opponent, env, total_updates=10, val_freq=10, train_actor=False, train_critic=False)
+    run_ppo(
+        trainable_agent, 
+        frozen_opponent, 
+        env, 
+        total_updates=80, 
+        val_freq=10, 
+        train_actor=True, 
+        train_critic=False
+    )
