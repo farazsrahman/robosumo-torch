@@ -8,6 +8,8 @@ import shutil
 
 import numpy as np
 import wandb
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 from robosumo.envs.rollout import (
     EpisodeDataTorchMiniBatchIterator,
@@ -39,13 +41,7 @@ def run_ppo(
     agent_policy,
     frozen_policy,
     env,
-    total_updates=2,
-    steps_per_update=512,
-    lr=3e-4,
-    val_freq=10_000_000,
-    train_actor=True,
-    train_critic=True,
-    self_play=True
+    cfg: DictConfig
 ):
     """
     Very simple pseudo-code style PPO loop using `MLPPolicy` and `rollout` data.
@@ -72,20 +68,24 @@ def run_ppo(
     a typical PPO implementation.
     """
     # Example optimizer over the trainable agent's parameters
-    optimizer = optim.Adam(agent_policy.parameters(), lr=lr)
+    optimizer = optim.Adam(agent_policy.parameters(), lr=cfg.lr)
 
-    # Initialize WandB
-    wandb.init(project="robosumo-torch", config={"lr": lr, "total_updates": total_updates})
+    # Initialize WandB with config
+    wandb.init(
+        project="robosumo-torch",
+        name=cfg.run_name if cfg.run_name else None,
+        config=OmegaConf.to_container(cfg, resolve=True)
+    )
 
-    for update_idx in range(total_updates):
-        print(f"=== PPO Update {update_idx + 1}/{total_updates} ===")
+    for update_idx in range(cfg.total_updates):
+        print(f"=== PPO Update {update_idx + 1}/{cfg.total_updates} ===")
 
         # 1) Collect trajectories by rolling out the current policies
         #    Note: we run multiple episodes and then stitch them together.
-        record_validation_video = (update_idx + 1) % val_freq == 0
+        record_validation_video = (update_idx + 1) % cfg.val_freq == 0
 
         # Self-play: load trainable_agent weights to frozen_opponent every validation step
-        if self_play and record_validation_video: # HACK using record_validation_video as a proxy for how often the opponent should be updated.
+        if cfg.self_play and record_validation_video: # HACK using record_validation_video as a proxy for how often the opponent should be updated.
             frozen_policy.load_state_dict(agent_policy.state_dict())
             frozen_policy.eval()  # Ensure frozen policy stays in eval mode
             print(f"Loaded trainable_agent weights to frozen_opponent at update {update_idx + 1} (validation step)")
@@ -155,11 +155,11 @@ def run_ppo(
             gae_lambda=0.95,
         )
 
-        if train_actor:
+        if cfg.train_actor:
             advantages.copy_(normalize(advantages))
 
         # 3) PPO update epochs/minibatches
-        if not train_actor and not train_critic:
+        if not cfg.train_actor and not cfg.train_critic:
             print("Both actor and critic training disabled; skipping optimization step.\n")
             continue
 
@@ -193,7 +193,7 @@ def run_ppo(
 
                 loss = torch.tensor(0.0, device=agent_policy.get_device())
 
-                if train_actor:
+                if cfg.train_actor:
                     if mb_log_probs is None:
                         raise RuntimeError("Old log probabilities missing for PPO actor update.")
                     ratio = torch.exp(new_log_probs - mb_log_probs)
@@ -204,7 +204,7 @@ def run_ppo(
                     loss = loss + policy_loss - entropy_bonus
                     epoch_policy_losses.append(policy_loss.item())
 
-                if train_critic:
+                if cfg.train_critic:
                     value_pred = value_pred.squeeze(-1)
                     value_clipped = mb_values + torch.clamp(value_pred - mb_values, -clip_epsilon, clip_epsilon)
                     value_loss_unclipped = (value_pred - mb_returns) ** 2
@@ -237,12 +237,19 @@ def run_ppo(
         print("Collected episodes and performed PPO update.\n")
 
 
-if __name__ == "__main__":
+@hydra.main(version_base=None, config_path="../../configs", config_name="ppo_config")
+def main(cfg: DictConfig) -> None:
+    """Main training function with Hydra configuration."""
+    # Print configuration
+    print("Configuration:")
+    print(OmegaConf.to_yaml(cfg))
+    print()
+    
     # Create agents and environment, then run the pseudo PPO loop
     policy_list, env = get_agents_and_env(
         debug=True,
-        load_actor=[False, False],
-        load_critic=[False, False],
+        load_actor=list(cfg.load_actor),
+        load_critic=list(cfg.load_critic),
     )
 
     # Expecting two agents; we'll train the first and keep the second frozen
@@ -256,10 +263,10 @@ if __name__ == "__main__":
     run_ppo(
         trainable_agent, 
         frozen_opponent, 
-        env, 
-        total_updates=10000, 
-        val_freq=25, 
-        train_actor=True, 
-        train_critic=True,
-        self_play=True # will load frozen opponent with trainable_agent weights every validation step
+        env,
+        cfg
     )
+
+
+if __name__ == "__main__":
+    main()

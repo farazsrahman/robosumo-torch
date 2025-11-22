@@ -1,0 +1,19 @@
+# Default PPO training configuration
+# @package _global_
+
+# Policy loading configuration
+load_actor: [false, false]
+load_critic: [false, false]
+
+# Training configuration
+train_actor: true
+train_critic: true
+val_freq: 25
+total_updates: 10000
+steps_per_update: 512
+lr: 3.0e-4
+self_play: true
+
+# WandB configuration
+run_name: null
+
