@@ -45,6 +45,7 @@ def run_ppo(
     val_freq=10_000_000,
     train_actor=True,
     train_critic=True,
+    self_play=True
 ):
     """
     Very simple pseudo-code style PPO loop using `MLPPolicy` and `rollout` data.
@@ -82,6 +83,12 @@ def run_ppo(
         # 1) Collect trajectories by rolling out the current policies
         #    Note: we run multiple episodes and then stitch them together.
         record_validation_video = (update_idx + 1) % val_freq == 0
+
+        # Self-play: load trainable_agent weights to frozen_opponent every validation step
+        if self_play and record_validation_video: # HACK using record_validation_video as a proxy for how often the opponent should be updated.
+            frozen_policy.load_state_dict(agent_policy.state_dict())
+            frozen_policy.eval()  # Ensure frozen policy stays in eval mode
+            print(f"Loaded trainable_agent weights to frozen_opponent at update {update_idx + 1} (validation step)")
 
         video_dir = None
         if record_validation_video:
@@ -234,8 +241,8 @@ if __name__ == "__main__":
     # Create agents and environment, then run the pseudo PPO loop
     policy_list, env = get_agents_and_env(
         debug=True,
-        load_actor=[False, True],
-        load_critic=[True, True],
+        load_actor=[False, False],
+        load_critic=[False, False],
     )
 
     # Expecting two agents; we'll train the first and keep the second frozen
@@ -250,8 +257,9 @@ if __name__ == "__main__":
         trainable_agent, 
         frozen_opponent, 
         env, 
-        total_updates=1000, 
-        val_freq=50, 
+        total_updates=10000, 
+        val_freq=25, 
         train_actor=True, 
-        train_critic=False
+        train_critic=True,
+        self_play=True # will load frozen opponent with trainable_agent weights every validation step
     )
