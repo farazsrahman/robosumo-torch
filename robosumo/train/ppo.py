@@ -101,7 +101,7 @@ def run_ppo(
             seed = lambda: [np.random.randint(1, 1000000) for _ in range(cfg.n_rollouts_per_worker)]
             seeds = [seed() for _ in range (cfg.n_rollout_workers)] # HACK 
             if True and record_validation_video:
-                seeds = [67] # HACK-y override to just get 1 video for speed
+                seeds = [[67]] # HACK-y override to just get 1 video for speed
                 print(f"Overriding seeds with {seeds} for video recording")
             # episodes = rollout(
             #     policy=[agent_policy, frozen_policy],
