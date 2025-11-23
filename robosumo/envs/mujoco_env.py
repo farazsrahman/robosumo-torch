@@ -218,7 +218,7 @@ class MujocoEnv(gym.Env):
             type(observation) is tuple) else observation.size
 
         bounds = self.model.actuator_ctrlrange.copy()
-        low, high = bounds[:, 0], bounds[:, 1]
+        low, high = bounds[:, 0].astype(np.float32), bounds[:, 1].astype(np.float32)
         
         # Use gymnasium spaces with proper dtype
         self.action_space = spaces.Box(low, high, dtype=np.float32)

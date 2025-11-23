@@ -89,9 +89,9 @@ class Agent(object):
     def _set_observation_space(self):
         obs = self.get_obs()
         self.obs_dim = obs.size
-        low = -np.inf * np.ones(self.obs_dim)
-        high = np.inf * np.ones(self.obs_dim)
-        self.observation_space = gym.spaces.Box(low, high)
+        low = -np.inf * np.ones(self.obs_dim, dtype=np.float32)
+        high = np.inf * np.ones(self.obs_dim, dtype=np.float32)
+        self.observation_space = gym.spaces.Box(low, high, dtype=np.float32)
 
     def _set_action_space(self):
         acts = self._xml.find('actuator')
@@ -104,19 +104,19 @@ class Agent(object):
                 ctrl = motor.get('ctrlrange')
                 if ctrl:
                     clow, chigh = list(map(float, ctrl.split()))
-                    high = chigh * np.ones(self.action_dim)
-                    low = clow * np.ones(self.action_dim)
+                    high = np.float32(chigh) * np.ones(self.action_dim, dtype=np.float32)
+                    low = np.float32(clow) * np.ones(self.action_dim, dtype=np.float32)
                     range_set = True
         if not range_set:
-            high =  np.ones(self.action_dim)
-            low = - np.ones(self.action_dim)
+            high = np.ones(self.action_dim, dtype=np.float32)
+            low = -np.ones(self.action_dim, dtype=np.float32)
         for i, motor in enumerate(list(acts)):
             ctrl = motor.get('ctrlrange')
             if ctrl:
                 clow, chigh = list(map(float, ctrl.split()))
-                low[i], high[i] = clow, chigh
+                low[i], high[i] = np.float32(clow), np.float32(chigh)
         self._low, self._high = low, high
-        self.action_space = gym.spaces.Box(low, high)
+        self.action_space = gym.spaces.Box(low, high, dtype=np.float32)
 
     def set_xyz(self, xyz):
         """Set (x, y, z) position of the agent; any element can be None."""
