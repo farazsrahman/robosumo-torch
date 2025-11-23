@@ -14,6 +14,10 @@ steps_per_update: 512
 lr: 3.0e-4
 self_play: true
 
+# Parallel rollout configuration
+n_rollout_workers: 32
+n_rollouts_per_worker: 64
+
 # WandB configuration
 run_name: null
 

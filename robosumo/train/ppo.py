@@ -16,6 +16,7 @@ from robosumo.envs.rollout import (
     get_agents_and_env,
     rollout,
 )
+from robosumo.envs.parallel_rollout import parallel_rollout
 from robosumo.policy_zoo.utils import DiagonalGaussian
 
 
@@ -96,12 +97,22 @@ def run_ppo(
 
         with torch.no_grad():
             # Use fixed seeds per episode to keep behavior stable between updates
-            # seeds = [1, 2, 3] 
-            seeds = [np.random.randint(1, 1000000) for _ in range(16)] # HACK 
+            # seeds = [1, 2, 3]
+            seed = lambda: [np.random.randint(1, 1000000) for _ in range(cfg.n_rollouts_per_worker)]
+            seeds = [seed() for _ in range (cfg.n_rollout_workers)] # HACK 
             if True and record_validation_video:
                 seeds = [67] # HACK-y override to just get 1 video for speed
                 print(f"Overriding seeds with {seeds} for video recording")
-            episodes = rollout(
+            # episodes = rollout(
+            #     policy=[agent_policy, frozen_policy],
+            #     env=env,
+            #     seeds=seeds, 
+            #     record_video=record_validation_video,
+            #     video_fast_mode=True,
+            #     debug=False,
+            #     video_dir=video_dir if record_validation_video else None
+            # )
+            episodes = parallel_rollout(
                 policy=[agent_policy, frozen_policy],
                 env=env,
                 seeds=seeds, 
@@ -110,6 +121,8 @@ def run_ppo(
                 debug=False,
                 video_dir=video_dir if record_validation_video else None
             )
+
+
 
         # episodes is a list of lists: episodes[agent_idx][episode_idx]
         # episodes[0] contains all episodes for the trainable agent (agent 0)
@@ -124,8 +137,8 @@ def run_ppo(
 
         print(f"Collected {num_episodes_collected} episode(s) with {total_steps} total steps")
         if num_episodes_collected > 0:
-            print(f"  Episode lengths: {[len(ep.action) for ep in trainable_agent_episodes]}")
-        
+            # print(f"  Episode lengths: {[len(ep.action) for ep in trainable_agent_episodes]}")
+            pass 
         if record_validation_video and video_dir:
             # Upload videos to WandB
             video_files = glob.glob(os.path.join(video_dir, "robosumo_episode*_values_video.mp4"))
@@ -225,7 +238,7 @@ def run_ppo(
                         early_stop = True
                         break
             if early_stop:
-                print(f"Stopped early due to reaching target KL ({last_kl:.4f}).")
+                print(f"Stopped early after {epoch + 1}/{ppo_epochs} epochs due to reaching target KL ({last_kl:.4f}).")
                 break
 
         # Log losses to WandB
