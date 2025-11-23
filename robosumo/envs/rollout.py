@@ -3,6 +3,7 @@ import os
 import time
 import torch
 from dataclasses import dataclass, field
+from typing import List
 
 import numpy as np
 
@@ -50,12 +51,12 @@ class EpisodeDataTorchMiniBatchIterator:
     and provides a mini-batch iterator that respects episode structure for GAE (i.e., no cross-episode mixing inside a batch).
     """
 
-    def __init__(self, episodes: list[EpisodeData], device="cpu", dtype=torch.float32):
+    def __init__(self, episodes: List[EpisodeData], device="cpu", dtype=torch.float32):
         self.device = torch.device(device)
         self.dtype = dtype
         self._build_buffers(episodes)
 
-    def _build_buffers(self, episodes: list[EpisodeData]):
+    def _build_buffers(self, episodes: List[EpisodeData]):
         obs_list = []
         act_list = []
         reward_list = []
@@ -186,8 +187,8 @@ def get_agents_and_env(debug = False, load_actor=None, load_critic=None):
         )
 
     # Auto-detect device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # device = 'cpu'
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = 'cpu'
     if debug:
         print("Using device: {}".format(device))
 
@@ -421,7 +422,7 @@ def rollout(policy, env, seeds, record_video=False, debug=False, video_fast_mode
 
     return rollouts
 
-def print_info(episodes: list[EpisodeData], agent_idx=0):
+def print_info(episodes: List[EpisodeData], agent_idx=0):
     """Prints info (steps, scores, draws) for a list of EpisodeData.
     
     Args:
