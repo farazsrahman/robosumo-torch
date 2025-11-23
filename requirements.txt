@@ -8,3 +8,4 @@ ipdb
 matplotlib
 wandb
 hydra-core
+tqdm
