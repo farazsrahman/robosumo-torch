@@ -19,6 +19,7 @@ from robosumo.envs.rollout import get_agents_and_env, rollout, print_info
 
 import multiprocessing
 from tqdm import tqdm
+import copy
 
 def single_rollout(policy, env, seeds):
     return rollout(
@@ -29,15 +30,23 @@ def single_rollout(policy, env, seeds):
         debug=False
     )
 
-def _worker_rollout(seeds):
+def _worker_rollout(args):
     """Worker function for multiprocessing - must be at module level."""
-    # Each process needs its own environment and policy copies
-    # MuJoCo environments are not thread-safe, so we must create separate instances
-    thread_policy, thread_env = get_agents_and_env(debug=False)
+    seeds, worker_policies = args
     
-    # Perform rollout with process-local policy and env
+    # Each process needs its own environment (MuJoCo environments are not thread-safe)
+    # But we use the deep-copied policies passed in
+    # TODO: deep copy the environments so that it uses the right morphologies and paramters etc.
+    _, thread_env = get_agents_and_env(debug=False)
+    
+    # Move policies to the appropriate device for this worker
+    for p in worker_policies:
+        p = p.to('cpu')
+        p.eval()  # Ensure eval mode
+    
+    # Perform rollout with the copied policies and process-local env
     result = rollout(
-        policy=thread_policy,
+        policy=worker_policies,
         env=thread_env,
         seeds=seeds,
         record_video=False,
@@ -50,11 +59,32 @@ def _worker_rollout(seeds):
     return result
 
 def parallel_rollout(policy, env, seeds, N, merge=False):
+    # Set multiprocessing start method to 'fork' since we currently do not plan on using CUDA ('spawn' better for CUDA)
+    try:
+        multiprocessing.set_start_method('fork', force=False)
+    except RuntimeError:
+        # Already set, ignore
+        pass
+    
+    # Deep copy policies for each worker
+    # Move to CPU first to ensure proper pickling across processes
+    worker_policies_list = []
+    for i in range(N):
+        worker_policies = []
+        for p in policy:
+            p_copy = copy.deepcopy(p)
+            p_copy = p_copy.cpu()
+            worker_policies.append(p_copy)
+        worker_policies_list.append(worker_policies)
+    
     # Use multiprocessing instead of threading for true parallelism
-    # Python's GIL prevents true parallelism with threading for CPU-bound work
     with multiprocessing.Pool(processes=N) as pool:
-        # Each process processes all seeds (2x work total)
-        results = pool.map(_worker_rollout, [seeds] * N)
+        # Each process processes all seeds with its own policy copy
+        args_list = [
+            (seeds, worker_policies)
+            for worker_policies in worker_policies_list
+        ]
+        results = pool.map(_worker_rollout, args_list)
     
     if merge:
         return merge_parallel_rollouts(results)
@@ -116,7 +146,7 @@ if __name__ == "__main__":
     single_steps_per_sec = single_steps / elapsed_single if elapsed_single > 0 else 0
 
     # Time parallel rollouts
-    n_values = [1, 2, 10, 16]
+    n_values = [1, 2, 10, 16, 32]
     parallel_timings = []
 
     for N in tqdm(n_values, desc="Parallel rollout", leave=False):
