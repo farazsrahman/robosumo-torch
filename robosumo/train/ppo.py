@@ -262,6 +262,20 @@ def run_ppo(
         step_end_time = time.time()
         full_step_time = step_end_time - step_start_time
         print(f"Completed PPO update {update_idx + 1} in {full_step_time:.2f} seconds (rollout: {rollout_step_time:.2f}s, training: {train_step_time:.2f}s).\n")
+        
+        # Save checkpoint every 500 steps (and on the first step)
+        checkpoint_interval = 500
+        if update_idx == 0 or (update_idx + 1) % checkpoint_interval == 0:
+            checkpoint_dir = "checkpoints"
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_step_{update_idx + 1}.pt")
+            checkpoint = {
+                'update_idx': update_idx + 1,
+                'agent_policy_state_dict': agent_policy.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+            }
+            torch.save(checkpoint, checkpoint_path)
+            print(f"Saved checkpoint to {checkpoint_path}")
 
 
 @hydra.main(version_base=None, config_path="../../configs", config_name="ppo_config")
