@@ -5,6 +5,7 @@ import os
 import tempfile
 import glob
 import shutil
+import time  # <-- for timing
 
 import numpy as np
 import wandb
@@ -79,6 +80,7 @@ def run_ppo(
     )
 
     for update_idx in range(cfg.total_updates):
+        step_start_time = time.time()
         print(f"=== PPO Update {update_idx + 1}/{cfg.total_updates} ===")
 
         # 1) Collect trajectories by rolling out the current policies
@@ -95,6 +97,7 @@ def run_ppo(
         if record_validation_video:
             video_dir = tempfile.mkdtemp(prefix="robosumo_videos_")
 
+        rollout_start_time = time.time()
         with torch.no_grad():
             # Use fixed seeds per episode to keep behavior stable between updates
             # seeds = [1, 2, 3]
@@ -121,8 +124,9 @@ def run_ppo(
                 debug=False,
                 video_dir=video_dir if record_validation_video else None
             )
-
-
+        rollout_end_time = time.time()
+        rollout_step_time = rollout_end_time - rollout_start_time
+        print(f"Rollout collection took {rollout_step_time:.2f} seconds.")
 
         # episodes is a list of lists: episodes[agent_idx][episode_idx]
         # episodes[0] contains all episodes for the trainable agent (agent 0)
@@ -153,11 +157,15 @@ def run_ppo(
             print(f"Uploaded validation videos to WandB and cleaned up temp directory at update {update_idx + 1}.")
 
         # 2) Flatten and prepare training data from all episodes
+        iterator_start_time = time.time()
         iterator = EpisodeDataTorchMiniBatchIterator(
             episodes=trainable_agent_episodes,
             device=agent_policy.get_device(),
             dtype=torch.float32,
         )
+        iterator_end_time = time.time()
+        iterator_duration = iterator_end_time - iterator_start_time
+        print(f"Dataloader (iterator) construction took {iterator_duration:.4f} seconds.")
 
         if len(iterator) == 0:
             print("No rollout data collected; skipping update.\n")
@@ -191,6 +199,7 @@ def run_ppo(
         epoch_policy_losses = []
         epoch_value_losses = []
 
+        train_start_time = time.time()
         for epoch in range(ppo_epochs):
             for (
                 mb_obs,
@@ -240,6 +249,9 @@ def run_ppo(
             if early_stop:
                 print(f"Stopped early after {epoch + 1}/{ppo_epochs} epochs due to reaching target KL ({last_kl:.4f}).")
                 break
+        train_end_time = time.time()
+        train_step_time = train_end_time - train_start_time
+        print(f"PPO training step took {train_step_time:.2f} seconds.")
 
         # Log losses to WandB
         if epoch_policy_losses:
@@ -247,7 +259,9 @@ def run_ppo(
         if epoch_value_losses:
             wandb.log({"value_loss": np.mean(epoch_value_losses)}, step=update_idx)
 
-        print("Collected episodes and performed PPO update.\n")
+        step_end_time = time.time()
+        full_step_time = step_end_time - step_start_time
+        print(f"Completed PPO update {update_idx + 1} in {full_step_time:.2f} seconds (rollout: {rollout_step_time:.2f}s, training: {train_step_time:.2f}s).\n")
 
 
 @hydra.main(version_base=None, config_path="../../configs", config_name="ppo_config")
