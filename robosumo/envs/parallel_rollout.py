@@ -32,7 +32,7 @@ def single_rollout(policy, env, seeds):
 
 def _worker_rollout(args):
     """Worker function for multiprocessing - must be at module level."""
-    seeds, worker_policies, record_video, video_dir, debug = args
+    seeds, worker_policies, record_video, video_dir, debug, anneal_main_reward_coef = args
     
     # Each process needs its own environment (MuJoCo environments are not thread-safe)
     # But we use the deep-copied policies passed in
@@ -52,7 +52,8 @@ def _worker_rollout(args):
         record_video=record_video,
         video_fast_mode=True,
         debug=debug,
-        video_dir=video_dir
+        video_dir=video_dir,
+        anneal_main_reward_coef=anneal_main_reward_coef
     )
     
     # Clean up process-local environment
@@ -68,7 +69,8 @@ def parallel_rollout(
     record_video=False, 
     debug=False, 
     video_fast_mode=False, 
-    video_dir="out"
+    video_dir="out",
+    anneal_main_reward_coef=1.0
 ):
     # The number of processes corresponds to the number of seed lists
     N = len(seeds)
@@ -96,7 +98,8 @@ def parallel_rollout(
                 worker_policies_list[i], 
                 record_video and i == 0, # HACK (faraz): only record on one of the thread so the recordings do NOT all override eachother
                 video_dir, 
-                debug
+                debug,
+                anneal_main_reward_coef
             ) for i in range(N)
         ]
         results = pool.map(_worker_rollout, args_list)

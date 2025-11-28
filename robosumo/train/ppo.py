@@ -98,6 +98,29 @@ def run_ppo(
             video_dir = tempfile.mkdtemp(prefix="robosumo_videos_")
 
         rollout_start_time = time.time()
+        
+        # Calculate main reward annealing coefficient
+        anneal_start = cfg.get('anneal_main_reward_start', 0)
+        anneal_end = cfg.get('anneal_main_reward_end', 0)
+        
+        if anneal_end > 0 and anneal_end > anneal_start:
+            # Annealing is enabled
+            if update_idx < anneal_start:
+                # Before annealing starts: coefficient = 0
+                anneal_coef = 0.0
+            elif update_idx >= anneal_end:
+                # After annealing ends: coefficient = 1.0
+                anneal_coef = 1.0
+            else:
+                # During annealing: linearly interpolate from 0 to 1
+                # At update_idx = anneal_start: coefficient = 0
+                # At update_idx = anneal_end: coefficient = 1.0
+                progress = (update_idx - anneal_start) / (anneal_end - anneal_start)
+                anneal_coef = min(1.0, max(0.0, progress))
+        else:
+            # No annealing: use full reward
+            anneal_coef = 1.0
+        
         with torch.no_grad():
             # Use fixed seeds per episode to keep behavior stable between updates
             # seeds = [1, 2, 3]
@@ -122,7 +145,8 @@ def run_ppo(
                 record_video=record_validation_video,
                 video_fast_mode=True,
                 debug=False,
-                video_dir=video_dir if record_validation_video else None
+                video_dir=video_dir if record_validation_video else None,
+                anneal_main_reward_coef=anneal_coef
             )
         rollout_end_time = time.time()
         rollout_step_time = rollout_end_time - rollout_start_time
@@ -180,9 +204,15 @@ def run_ppo(
             advantages.copy_(normalize(advantages))
 
         # 3) PPO update epochs/minibatches
-        if not cfg.train_actor and not cfg.train_critic:
+        freeze_critic_steps = cfg.get('freeze_critic_steps', 0)
+        should_train_critic = cfg.train_critic and update_idx >= freeze_critic_steps
+        
+        if not cfg.train_actor and not should_train_critic:
             print("Both actor and critic training disabled; skipping optimization step.\n")
             continue
+        
+        if cfg.train_critic and update_idx < freeze_critic_steps:
+            print(f"Critic frozen for this update (update {update_idx + 1} < freeze_critic_steps={freeze_critic_steps})")
 
         ppo_epochs = 4
         minibatch_size = 64
@@ -226,7 +256,7 @@ def run_ppo(
                     loss = loss + policy_loss - entropy_bonus
                     epoch_policy_losses.append(policy_loss.item())
 
-                if cfg.train_critic:
+                if should_train_critic:
                     value_pred = value_pred.squeeze(-1)
                     value_clipped = mb_values + torch.clamp(value_pred - mb_values, -clip_epsilon, clip_epsilon)
                     value_loss_unclipped = (value_pred - mb_returns) ** 2

@@ -8,6 +8,9 @@ load_critic: [false, false]
 # Training configuration
 train_actor: true
 train_critic: true
+freeze_critic_steps: 0  # Freeze critic for the first N updates (0 = no freezing)
+anneal_main_reward_start: 0  # Start annealing main reward at this update (0 = start immediately)
+anneal_main_reward_end: 0  # End annealing main reward at this update (0 = no annealing, use full reward from start)
 val_freq: 50
 total_updates: 1000000
 steps_per_update: 512

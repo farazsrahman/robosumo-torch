@@ -261,7 +261,7 @@ def get_agents_and_env(debug = False, load_actor=None, load_critic=None):
 
     return policy, env
 
-def rollout(policy, env, seeds, record_video=False, debug=False, video_fast_mode=False, video_dir="out"):
+def rollout(policy, env, seeds, record_video=False, debug=False, video_fast_mode=False, video_dir="out", anneal_main_reward_coef=1.0):
     max_episodes = len(seeds)
     
     
@@ -338,10 +338,17 @@ def rollout(policy, env, seeds, record_video=False, debug=False, video_fast_mode
 
         nstep += 1
         for i in range(len(policy)):
-            total_reward[i] += reward[i]
+            # Recompute reward with annealing: anneal_main_reward_coef * main_reward + shaping_reward
+            if 'main_reward' in infos[i] and 'shaping_reward' in infos[i]:
+                annealed_reward = anneal_main_reward_coef * infos[i]['main_reward'] + infos[i]['shaping_reward']
+            else:
+                # Fallback to original reward if infos don't have the expected structure
+                annealed_reward = reward[i]
+            
+            total_reward[i] += annealed_reward
             rollouts[i][-1].action.append(action[i])
             rollouts[i][-1].obs.append(observation[i])
-            rollouts[i][-1].reward.append(reward[i])
+            rollouts[i][-1].reward.append(annealed_reward)
             rollouts[i][-1].total_reward.append(total_reward[i])
             rollouts[i][-1].done.append(done[i])
             rollouts[i][-1].infos.append(infos[i]) 
