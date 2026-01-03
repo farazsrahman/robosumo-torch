@@ -2,7 +2,7 @@
 
 # RoboSumo-Torch
 
-PyTorch reimplementation of [OpenAI RoboSumo](https://github.com/openai/robosumo) - a multi-agent sumo wrestling environment for training competitive agents. Beyond, the original repo we also add a data rollout and PPO loop for RL training. NOTE: Checkpoints from the original repo are available and work in the current code-base, but a full train-from-scratch has not been tested (yet) due to compute constraints on the author.
+Modern PyTorch reimplementation of [OpenAI RoboSumo](https://github.com/openai/robosumo) - a multi-agent sumo wrestling environment for training competitive agents. Beyond, the original repo we also add a data rollout and PPO loop for RL training. NOTE: Checkpoints from the original repo are available and work in the current code-base, but a full train-from-scratch has not been tested (yet) due to compute constraints on the author.
 
 ## Features
 
